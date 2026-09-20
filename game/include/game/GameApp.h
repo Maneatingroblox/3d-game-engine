@@ -1,0 +1,39 @@
+#pragma once
+// The standalone game runtime shell: shows a main menu (New/Continue/
+// Settings/Quit), loads a .fwscene and hands off to Engine::Play(), and
+// provides a pause menu (Esc) that can resume, reopen settings, or return to
+// the main menu. No editor code is linked into this executable - this is
+// what ships to players.
+
+#include "engine/core/Application.h"
+#include "engine/core/Engine.h"
+#include "engine/core/Settings.h"
+#include <string>
+
+namespace fw {
+
+enum class GameUIState { MainMenu, Settings, Playing, Paused };
+
+class GameApp : public Application {
+protected:
+    bool OnInit() override;
+    void OnUpdate(float dt) override;
+    void OnRender() override;
+    void OnImGui() override;
+    void OnShutdown() override;
+    void OnResize(int width, int height) override;
+
+private:
+    void DrawMainMenu();
+    void DrawSettingsMenu();
+    void DrawPauseMenu();
+    void StartGame(const std::string& scenePath);
+    void ReturnToMainMenu();
+
+    Engine m_Engine;
+    GameUIState m_UIState = GameUIState::MainMenu;
+    GameUIState m_ReturnStateAfterSettings = GameUIState::MainMenu;
+    std::string m_StartupScene = "assets/scenes/default.fwscene";
+};
+
+} // namespace fw

@@ -1,0 +1,23 @@
+# Build output (CMake build trees, including the Zig cross-compile
+# validation build used to check Windows-only code from this sandbox).
+build/
+build-*/
+out/
+bin/
+
+# Generated brush-compiled meshes / lightmaps (produced by the editor at
+# runtime, not source content).
+assets/generated/
+
+# Scratch output from engine_tests (writes scene files/lightmaps under here).
+test_output/
+
+# IDE / OS cruft
+.vs/
+.vscode/
+*.user
+.DS_Store
+Thumbs.db
+
+# Settings written next to the built executable at runtime.
+settings.json
