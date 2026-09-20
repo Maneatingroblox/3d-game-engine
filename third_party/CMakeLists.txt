@@ -1,0 +1,119 @@
+# ---------------------------------------------------------------------------
+# Vendored third-party dependencies. Each is wrapped in a small INTERFACE or
+# STATIC target so the rest of the project can just target_link_libraries()
+# against a clean name.
+# ---------------------------------------------------------------------------
+
+# ---- nlohmann/json (header only) ----
+add_library(fw_json INTERFACE)
+target_include_directories(fw_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/json)
+
+# ---- GLM (header only) ----
+add_library(fw_glm INTERFACE)
+target_include_directories(fw_glm INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/glm)
+target_compile_definitions(fw_glm INTERFACE GLM_ENABLE_EXPERIMENTAL GLM_FORCE_SILENT_WARNINGS)
+
+# ---- EnTT (header only ECS) ----
+add_library(fw_entt INTERFACE)
+target_include_directories(fw_entt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/entt/include)
+
+# ---- stb (header only) ----
+add_library(fw_stb INTERFACE)
+target_include_directories(fw_stb INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/stb)
+
+# ---- tinyobjloader (header only) ----
+add_library(fw_tinyobj INTERFACE)
+target_include_directories(fw_tinyobj INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tinyobjloader)
+
+# ---- Lua 5.5 (built as a C static lib) ----
+# Exclude the standalone-interpreter/compiler/amalgamation sources: lua.c and
+# luac.c each define main(), and onelua.c #includes every other .c file
+# (Lua's single-TU amalgamated build option) - compiling any of them
+# alongside the rest of lua/src/*.c produces duplicate symbols / "file not
+# found" errors, so the library is built from the individual sources only.
+file(GLOB FW_LUA_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/*.c)
+list(REMOVE_ITEM FW_LUA_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/lua.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/luac.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/lua/src/onelua.c
+)
+add_library(fw_lua STATIC ${FW_LUA_SOURCES})
+target_include_directories(fw_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lua/src)
+if(WIN32)
+    target_compile_definitions(fw_lua PRIVATE LUA_USE_WINDOWS)
+else()
+    target_compile_definitions(fw_lua PRIVATE LUA_USE_LINUX)
+    target_link_libraries(fw_lua PUBLIC m dl)
+endif()
+set_target_properties(fw_lua PROPERTIES LINKER_LANGUAGE C)
+
+# ---- sol2 (header only, sits on top of fw_lua) ----
+add_library(fw_sol2 INTERFACE)
+target_include_directories(fw_sol2 INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/sol2/include)
+target_compile_definitions(fw_sol2 INTERFACE SOL_ALL_SAFETIES_ON=1)
+target_link_libraries(fw_sol2 INTERFACE fw_lua)
+
+# ---- Jolt Physics (real subdirectory build) ----
+# JPH_USE_DX12/VK/METAL/CPU_COMPUTE only gate Jolt's optional GPU broadphase
+# debug-visualization backends, not the physics simulation itself - Forgeworks
+# doesn't use them (rendering is entirely our own D3D11 Renderer), and
+# leaving DX12 on pulls in d3dcompiler.lib/d3d12.lib which the mingw-w64
+# toolchain (used for this repo's Zig cross-compile validation build) only
+# ships as versioned import libs, not the unversioned names Jolt hardcodes.
+set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
+set(DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
+set(GENERATE_DEBUG_SYMBOLS ON CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(CPP_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/jolt/Build EXCLUDE_FROM_ALL)
+add_library(fw_jolt INTERFACE)
+target_link_libraries(fw_jolt INTERFACE Jolt)
+target_include_directories(fw_jolt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/jolt)
+
+# ---- Dear ImGui + ImGuizmo + Win32/DX11 backends (Windows / editor build only) ----
+if(NOT FORGEWORKS_HEADLESS)
+    add_library(fw_imgui STATIC
+        imgui/imgui.cpp
+        imgui/imgui_draw.cpp
+        imgui/imgui_tables.cpp
+        imgui/imgui_widgets.cpp
+        imgui/imgui_demo.cpp
+        imgui/misc/cpp/imgui_stdlib.cpp
+        imgui/backends/imgui_impl_win32.cpp
+        imgui/backends/imgui_impl_dx11.cpp
+        imguizmo/ImGuizmo.cpp
+    )
+    target_include_directories(fw_imgui PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/imguizmo
+    )
+    if(WIN32)
+        # The Windows SDK (MSVC) ships an unversioned d3dcompiler.lib, but
+        # mingw-w64 (including clang -target *-windows-gnu, e.g. building
+        # via Zig) only provides versioned import libs (d3dcompiler_47 etc.)
+        # - link the right name for whichever toolchain is active.
+        if(MINGW OR FORGEWORKS_USING_MINGW_IMPORT_LIBS)
+            target_link_libraries(fw_imgui PUBLIC d3d11 dxgi d3dcompiler_47 dwmapi)
+        else()
+            target_link_libraries(fw_imgui PUBLIC d3d11 dxgi d3dcompiler dwmapi)
+        endif()
+    endif()
+endif()
+
+# ---- miniaudio (header only, Windows / non-headless build only) ----
+if(NOT FORGEWORKS_HEADLESS)
+    add_library(fw_miniaudio INTERFACE)
+    target_include_directories(fw_miniaudio INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/miniaudio)
+endif()
