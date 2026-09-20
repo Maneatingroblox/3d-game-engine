@@ -2,9 +2,21 @@
 #include "engine/core/Log.h"
 #include <algorithm>
 
+// miniaudio is a large third-party header that triggers C4244 (possible loss of data)
+// and other benign warnings on MSVC when built with /W3. We suppress those warnings
+// locally so the engine build stays warning-free.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable: 4244 4127 4701 4702 4456 4457 4706 26812 6011 6262 6308 6330 6385 6386 28182)
+#endif
+
 #define MA_NO_WEBAUDIO
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 namespace fw {
 

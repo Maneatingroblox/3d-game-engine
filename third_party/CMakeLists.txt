@@ -40,12 +40,23 @@ list(REMOVE_ITEM FW_LUA_SOURCES
 add_library(fw_lua STATIC ${FW_LUA_SOURCES})
 target_include_directories(fw_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/lua/src)
 if(WIN32)
-    target_compile_definitions(fw_lua PRIVATE LUA_USE_WINDOWS)
+    # On Windows, luaconf.h auto-defines LUA_USE_WINDOWS when _WIN32 is present.
+    # Its guard is #if !defined(LUA_USE_C89) && defined(_WIN32) ... so if we
+    # also define it via /D on the command line, the header re-defines it and
+    # MSVC emits C4005 macro redefinition for every Lua source file.
+    # Therefore we intentionally do NOT define LUA_USE_WINDOWS here and let
+    # luaconf.h handle it. This eliminates all C4005 warnings.
 else()
     target_compile_definitions(fw_lua PRIVATE LUA_USE_LINUX)
     target_link_libraries(fw_lua PUBLIC m dl)
 endif()
 set_target_properties(fw_lua PROPERTIES LINKER_LANGUAGE C)
+# Extra safety: if for any reason LUA_USE_WINDOWS still ends up defined via
+# other compile definitions, suppress the harmless C4005 warning for this
+# third-party target only.
+if(MSVC)
+    target_compile_options(fw_lua PRIVATE /wd4005)
+endif()
 
 # ---- sol2 (header only, sits on top of fw_lua) ----
 add_library(fw_sol2 INTERFACE)
@@ -75,6 +86,21 @@ set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
 set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+# Critical: Jolt defaults to static MSVC runtime (MT/MTd) via
+# USE_STATIC_MSVC_RUNTIME_LIBRARY=ON. Forgeworks (and the MSVC default)
+# uses dynamic runtime (MD/MDd). Mismatch causes:
+#   LNK2038: mismatch detected for 'RuntimeLibrary': MT_StaticRelease vs MD_DynamicRelease
+#   LNK4098: defaultlib 'LIBCMT' conflicts
+#   LNK2005: multiply defined symbols from msvcprt vs libcpmt
+# Forcing this OFF makes Jolt use MD/MDd, matching the rest of the project.
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+# Also ensure Jolt's CMAKE_MSVC_RUNTIME_LIBRARY is set to MD/MDd even if
+# the parent scope already forced it - Jolt's own CMakeLists checks
+# USE_STATIC_MSVC_RUNTIME_LIBRARY and would otherwise override.
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
+endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/jolt/Build EXCLUDE_FROM_ALL)
 add_library(fw_jolt INTERFACE)
 target_link_libraries(fw_jolt INTERFACE Jolt)
