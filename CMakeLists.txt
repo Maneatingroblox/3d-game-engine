@@ -28,6 +28,11 @@ if(WIN32)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 endif()
 if(MSVC)
+    # Force dynamic MSVC runtime (MD/MDd) for all targets, including Jolt.
+    # Jolt defaults to static runtime (MT) via USE_STATIC_MSVC_RUNTIME_LIBRARY=ON,
+    # which causes LNK2038 mismatch and LNK2005/LNK4098 when linking against
+    # the rest of Forgeworks (which uses the default dynamic runtime).
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL" CACHE STRING "" FORCE)
     add_compile_options(/MP /W3 /permissive-)
 endif()
 
