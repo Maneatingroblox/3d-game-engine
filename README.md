@@ -57,21 +57,21 @@ cmake/              Helper CMake modules.
 docs/               Extra documentation (scripting API reference, file formats, build notes).
 ```
 
-## Building (Windows, Visual Studio 2022)
+## Building (Windows, Visual Studio 2026)
 
 This project targets **Windows + DirectX 11** using MSVC. It will NOT build a graphical target on
 Linux/macOS (there is no D3D11 there) — see "Headless / CI build" below for what *does* build
 cross-platform (used to validate engine logic in this repo's automated checks).
 
 Prerequisites:
-- Visual Studio 2022 (Desktop C++ workload) or the standalone MSVC Build Tools
-- CMake ≥ 3.20
+- Visual Studio 2026 (Desktop C++ workload) or the standalone MSVC Build Tools
+- CMake ≥ 4.2 (needed for the `Visual Studio 18 2026` generator name; VS 2026 bundles a recent-enough CMake automatically)
 - Windows 10/11 SDK (installed with VS)
 
 ```powershell
 git clone <this repo>
 cd 3d-game-engine
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config RelWithDebInfo
 ```
 
@@ -82,6 +82,8 @@ Outputs:
 Run the editor, open/create a scene under `assets/scenes`, and press **Play** to test with real
 physics/scripts/audio running in-editor. Use the **Hammer Mode** button in the toolbar to switch
 the viewport into brush editing.
+
+If you are still on Visual Studio 2022, swap the generator back to `-G "Visual Studio 17 2022"`. That still works; no other project changes are needed (`cmake_minimum_required` in `CMakeLists.txt` remains 3.20).
 
 ## Headless / CI build (Linux, used for validating engine logic)
 
