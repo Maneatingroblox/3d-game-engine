@@ -1,6 +1,8 @@
 #include "engine/render/ShaderLibrary.h"
 #include "engine/render/RenderDevice.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
+#include <filesystem>
 
 #if FW_PLATFORM_WINDOWS
 #include <d3dcompiler.h>
@@ -8,9 +10,17 @@
 
 namespace fw {
 
-static ComPtr<ID3DBlob> CompileShaderFromFile(const std::string& path, const char* entry, const char* target) {
+static ComPtr<ID3DBlob> CompileShaderFromFile(const std::string& rawPath, const char* entry, const char* target) {
     ComPtr<ID3DBlob> blob;
     ComPtr<ID3DBlob> errors;
+    // Shaders live under the project root; resolve so the editor/game find them
+    // no matter which directory the executable was launched from. A missing
+    // shader means a blank viewport, so failures are loud (see Renderer).
+    const std::string path = Paths::Resolve(rawPath);
+    if (!std::filesystem::exists(path)) {
+        FW_LOG_ERROR("Shader file not found: %s (resolved to %s)", rawPath.c_str(), path.c_str());
+        return nullptr;
+    }
     std::wstring wpath(path.begin(), path.end());
 
     UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
@@ -23,6 +33,9 @@ static ComPtr<ID3DBlob> CompileShaderFromFile(const std::string& path, const cha
     if (FAILED(hr)) {
         FW_LOG_ERROR("Shader compile failed (%s:%s): %s", path.c_str(), entry,
             errors ? (const char*)errors->GetBufferPointer() : "unknown error");
+        FW_LOG_ERROR("The 3D viewport cannot render without its shaders - the editor will use "
+                     "its CPU preview instead (View > CPU Viewport Preview). This shader is not "
+                     "recompiled or re-logged again.");
         return nullptr;
     }
     return blob;
@@ -31,10 +44,11 @@ static ComPtr<ID3DBlob> CompileShaderFromFile(const std::string& path, const cha
 ShaderProgram* ShaderLibrary::LoadMeshShader(const std::string& path) {
     auto it = m_Cache.find(path);
     if (it != m_Cache.end()) return it->second.get();
+    if (m_Failed.count(path)) return nullptr; // don't retry a known-bad shader every frame
 
     auto vsBlob = CompileShaderFromFile(path, "VSMain", "vs_5_0");
     auto psBlob = CompileShaderFromFile(path, "PSMain", "ps_5_0");
-    if (!vsBlob || !psBlob) return nullptr;
+    if (!vsBlob || !psBlob) { m_Failed.insert(path); return nullptr; }
 
     auto program = MakeScope<ShaderProgram>();
     m_Device->Device()->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &program->vs);
@@ -60,9 +74,10 @@ ShaderProgram* ShaderLibrary::LoadDepthOnlyShader(const std::string& path) {
     std::string key = path + "#depth";
     auto it = m_Cache.find(key);
     if (it != m_Cache.end()) return it->second.get();
+    if (m_Failed.count(key)) return nullptr;  // do not recompile/re-log a known-bad shader
 
     auto vsBlob = CompileShaderFromFile(path, "VSMain", "vs_5_0");
-    if (!vsBlob) return nullptr;
+    if (!vsBlob) { m_Failed.insert(key); return nullptr; }
 
     auto program = MakeScope<ShaderProgram>();
     m_Device->Device()->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &program->vs);
@@ -81,10 +96,11 @@ ShaderProgram* ShaderLibrary::LoadFullscreenShader(const std::string& path) {
     std::string key = path + "#fullscreen";
     auto it = m_Cache.find(key);
     if (it != m_Cache.end()) return it->second.get();
+    if (m_Failed.count(key)) return nullptr;  // do not recompile/re-log a known-bad shader
 
     auto vsBlob = CompileShaderFromFile(path, "VSMain", "vs_5_0");
     auto psBlob = CompileShaderFromFile(path, "PSMain", "ps_5_0");
-    if (!vsBlob || !psBlob) return nullptr;
+    if (!vsBlob || !psBlob) { m_Failed.insert(path); return nullptr; }
 
     auto program = MakeScope<ShaderProgram>();
     m_Device->Device()->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &program->vs);
@@ -96,7 +112,9 @@ ShaderProgram* ShaderLibrary::LoadFullscreenShader(const std::string& path) {
     return raw;
 }
 
-void ShaderLibrary::Clear() { m_Cache.clear(); }
+void ShaderLibrary::Clear() { m_Cache.clear(); m_Failed.clear(); }
+
+bool ShaderLibrary::HasFailed(const std::string& path) const { return m_Failed.count(path) != 0; }
 
 } // namespace fw
 

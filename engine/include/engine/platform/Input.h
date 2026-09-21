@@ -7,6 +7,44 @@
 #include "engine/math/Math.h"
 #include <array>
 
+// The engine's key convention is the Win32 virtual-key code: the Win32 window
+// feeds WM_KEYDOWN straight into Input::OnKeyDown() and scripts/editors query it
+// with those codes. Hosts without windows.h (headless validation, tools/fwui)
+// get the same numeric values here so platform-independent code - the editor,
+// its panels, the game - compiles and runs unchanged.
+#if !FW_PLATFORM_WINDOWS
+    #ifndef VK_LBUTTON
+        #define VK_LBUTTON  0x01
+        #define VK_RBUTTON  0x02
+        #define VK_MBUTTON  0x04
+        #define VK_BACK     0x08
+        #define VK_TAB      0x09
+        #define VK_RETURN   0x0D
+        #define VK_SHIFT    0x10
+        #define VK_CONTROL  0x11
+        #define VK_MENU     0x12
+        #define VK_ESCAPE   0x1B
+        #define VK_SPACE    0x20
+        #define VK_LEFT     0x25
+        #define VK_UP       0x26
+        #define VK_RIGHT    0x27
+        #define VK_DOWN     0x28
+        #define VK_DELETE   0x2E
+        #define VK_F1       0x70
+        #define VK_F2       0x71
+        #define VK_F3       0x72
+        #define VK_F4       0x73
+        #define VK_F5       0x74
+        #define VK_F6       0x75
+        #define VK_F7       0x76
+        #define VK_F8       0x77
+        #define VK_F9       0x79
+        #define VK_F10      0x79
+        #define VK_F11      0x7A
+        #define VK_F12      0x7B
+    #endif
+#endif
+
 namespace fw {
 
 class ScriptEngine;

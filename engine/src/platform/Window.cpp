@@ -1,5 +1,7 @@
 #include "engine/platform/Window.h"
 #include "engine/core/Log.h"
+#include <algorithm>
+#include <cstring>
 
 #if FW_PLATFORM_WINDOWS
 
@@ -21,11 +23,30 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     switch (msg) {
+        // Paint the client area with the window class background brush instead
+        // of letting Windows fill it with the default (white) colour: a window
+        // whose first frame hasn't been presented yet should look dark like the
+        // engine's clear colour, not like a broken blank window.
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_PAINT: {
+            // Repaint from the last software frame (if any) instead of letting
+            // Windows fill the client area: a window that is covered, moved or
+            // resized must keep showing the editor rather than a blank rect.
+            PAINTSTRUCT ps{};
+            HDC dc = BeginPaint(hwnd, &ps);
+            if (self) self->BlitSoftwareFrameTo(dc, ps.rcPaint.right, ps.rcPaint.bottom);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
         case WM_SIZE: {
             if (self) {
                 self->m_Width = LOWORD(lParam);
                 self->m_Height = HIWORD(lParam);
                 self->m_Minimized = (wParam == SIZE_MINIMIZED);
+                self->m_Maximized = (wParam == SIZE_MAXIMIZED) || IsZoomed(hwnd);
                 if (self->OnResize && wParam != SIZE_MINIMIZED) self->OnResize(self->m_Width, self->m_Height);
             }
             return 0;
@@ -51,8 +72,14 @@ bool Window::Create(const WindowDesc& desc) {
     wc.lpfnWndProc = &Window::WndProc;
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = CreateSolidBrush(RGB(18, 18, 22)); // engine clear colour
     wc.lpszClassName = kClassName;
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc)) {
+        // Class already registered by a previous instance - fine; otherwise log.
+        DWORD err = GetLastError();
+        if (err != ERROR_CLASS_ALREADY_EXISTS)
+            FW_LOG_WARN("RegisterClassExW failed (error %lu)", err);
+    }
 
     DWORD style = desc.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX);
 
@@ -78,15 +105,93 @@ bool Window::Create(const WindowDesc& desc) {
     if (desc.maximized) ShowWindow(m_Hwnd, SW_MAXIMIZE);
     else ShowWindow(m_Hwnd, SW_SHOW);
     UpdateWindow(m_Hwnd);
+    m_Maximized = IsZoomed(m_Hwnd) != 0;
 
-    FW_LOG_INFO("Window created: %s (%dx%d)", desc.title.c_str(), desc.width, desc.height);
+    // Launched from a terminal / shortcut the new window can end up behind it;
+    // bring it to the front so "nothing appeared" can't be a focus problem.
+    SetForegroundWindow(m_Hwnd);
+    SetFocus(m_Hwnd);
+
+    RECT client{};
+    GetClientRect(m_Hwnd, &client);
+    FW_LOG_INFO("Window created: '%s' requested %dx%d, client area %ldx%ld (visible=%d)",
+                desc.title.c_str(), desc.width, desc.height,
+                client.right - client.left, client.bottom - client.top, IsWindowVisible(m_Hwnd) ? 1 : 0);
     return true;
 }
 
 void Window::Destroy() {
+    if (m_SoftBitmap) {
+        if (m_SoftDC && m_SoftOldBitmap) SelectObject(m_SoftDC, m_SoftOldBitmap);
+        DeleteObject(m_SoftBitmap);
+        m_SoftBitmap = nullptr;
+        m_SoftBits = nullptr;
+        m_SoftWidth = m_SoftHeight = 0;
+    }
+    if (m_SoftDC) {
+        DeleteDC(m_SoftDC);
+        m_SoftDC = nullptr;
+    }
     if (m_Hwnd) {
         DestroyWindow(m_Hwnd);
         m_Hwnd = nullptr;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Software (GDI) presentation
+// ---------------------------------------------------------------------------
+// The GPU-less display path: a top-down 32-bit DIB section holds the CPU
+// framebuffer (engine/render/SoftCanvas.h) and BitBlt pushes it to the client
+// area. No D3D11 device, swap chain or shader is involved, so the editor can
+// always show its interface.
+void Window::BlitSoftwareFrameTo(HDC target, int width, int height) {
+    if (!target || !m_SoftDC || !m_SoftBitmap || m_SoftWidth <= 0 || m_SoftHeight <= 0) return;
+    const int w = std::min(width, m_SoftWidth);
+    const int h = std::min(height, m_SoftHeight);
+    if (w > 0 && h > 0) BitBlt(target, 0, 0, w, h, m_SoftDC, 0, 0, SRCCOPY);
+}
+
+void Window::BlitSoftwareFrame(const u8* rgba, int width, int height) {
+    if (!m_Hwnd || !rgba || width <= 0 || height <= 0) return;
+
+    if (!m_SoftBitmap || width != m_SoftWidth || height != m_SoftHeight) {
+        if (!m_SoftDC) m_SoftDC = CreateCompatibleDC(nullptr);
+        if (!m_SoftDC) { FW_LOG_ERROR("Software present: CreateCompatibleDC failed"); return; }
+        if (m_SoftBitmap) {
+            if (m_SoftOldBitmap) SelectObject(m_SoftDC, m_SoftOldBitmap);
+            DeleteObject(m_SoftBitmap);
+            m_SoftBitmap = nullptr;
+            m_SoftBits = nullptr;
+        }
+
+        BITMAPINFO bi{};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = width;
+        bi.bmiHeader.biHeight = -height;  // negative: top-down, like SoftCanvas
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        m_SoftBitmap = CreateDIBSection(m_SoftDC, &bi, DIB_RGB_COLORS, &m_SoftBits, nullptr, 0);
+        if (!m_SoftBitmap || !m_SoftBits) {
+            FW_LOG_ERROR("Software present: CreateDIBSection failed (%dx%d)", width, height);
+            m_SoftBitmap = nullptr;
+            m_SoftBits = nullptr;
+            return;
+        }
+        m_SoftOldBitmap = SelectObject(m_SoftDC, m_SoftBitmap);
+        m_SoftWidth = width;
+        m_SoftHeight = height;
+    }
+
+    // A 32-bit DIB section is 4-byte aligned, and so is width*4, so the rows
+    // can be copied in one go.
+    std::memcpy(m_SoftBits, rgba, (size_t)width * (size_t)height * 4u);
+
+    HDC dc = GetDC(m_Hwnd);
+    if (dc) {
+        BlitSoftwareFrameTo(dc, width, height);
+        ReleaseDC(m_Hwnd, dc);
     }
 }
 

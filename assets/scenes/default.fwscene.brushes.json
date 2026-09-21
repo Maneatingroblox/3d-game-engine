@@ -1,0 +1,180 @@
+{
+  "brushes": [
+    {
+      "classname": "worldspawn",
+      "faces": [
+        {
+          "d": -20.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "uAxis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "d": -20.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "uAxis": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "d": -0.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "uAxis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        {
+          "d": -1.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "uAxis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            0.0,
+            1.0
+          ]
+        },
+        {
+          "d": -20.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "uAxis": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        {
+          "d": -20.0,
+          "material": "assets/textures/dev/dev_grey.png",
+          "normal": [
+            0.0,
+            0.0,
+            -1.0
+          ],
+          "uAxis": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "uvOffset": [
+            0.0,
+            0.0
+          ],
+          "uvRotationDeg": 0.0,
+          "uvScale": [
+            0.25,
+            0.25
+          ],
+          "vAxis": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        }
+      ],
+      "id": 7299461636725818462,
+      "isTrigger": false
+    }
+  ],
+  "version": 1
+}

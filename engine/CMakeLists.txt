@@ -17,11 +17,27 @@ set(FW_CORE_SOURCES
     src/brush/BrushMap.cpp
     src/lightmap/Lightmapper.cpp
     src/scene/SceneSerializer.cpp
+    src/scene/DefaultScene.cpp
     src/core/Settings.cpp
     src/core/Engine.cpp
+    # Paths: locating the project root so content loads no matter what the
+    # working directory is (see engine/core/Paths.h).
+    src/core/Paths.cpp
+    # Material loading is platform independent (only Bind() is D3D11); the CPU
+    # reference renderer needs it too.
+    src/render/MaterialSystem.cpp
+    # CPU reference renderer: lets the viewport be rendered (and screenshotted)
+    # without a GPU, and backs the "viewport is not blank" regression test.
+    src/render/SoftwareRenderer.cpp
+    # CPU presentation surface: rasterizes Dear ImGui draw data so the editor UI
+    # can be displayed (Windows, GDI blit) or screenshotted (any host) without a
+    # GPU, and backs the "the editor cannot be blank" guarantee.
+    src/render/SoftCanvas.cpp
+    # Input state is platform independent (fed by the Win32 window on Windows).
+    src/platform/Input.cpp
 )
 
-set(FW_CORE_LIBS fw_json fw_glm fw_entt fw_stb fw_tinyobj fw_sol2 fw_jolt)
+set(FW_CORE_LIBS fw_json fw_glm fw_entt fw_stb fw_tinyobj fw_sol2 fw_jolt fw_imgui_core)
 
 if(NOT FORGEWORKS_HEADLESS)
     list(APPEND FW_CORE_SOURCES
@@ -29,9 +45,7 @@ if(NOT FORGEWORKS_HEADLESS)
         src/render/RenderDevice.cpp
         src/render/Renderer.cpp
         src/render/ShaderLibrary.cpp
-        src/render/MaterialSystem.cpp
         src/platform/Window.cpp
-        src/platform/Input.cpp
         src/asset/TextureLoader.cpp
         src/asset/GpuMeshCache.cpp
         src/core/Application.cpp

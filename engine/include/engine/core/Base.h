@@ -53,6 +53,12 @@ constexpr Ref<T> MakeRef(Args&&... args) {
 
 } // namespace fw
 
+// Short commit this binary was built from (set by CMakeLists.txt; logged at
+// start-up and shown in the window title so a report identifies its build).
+#if !defined(FW_BUILD_ID)
+    #define FW_BUILD_ID "unknown"
+#endif
+
 #define FW_BIT(x) (1u << (x))
 #define FW_UNUSED(x) (void)(x)
 

@@ -9,6 +9,7 @@
 // purely an authoring convenience, not a separate runtime.
 #include "editor/EditorApp.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include "engine/platform/Input.h"
 #include <imgui.h>
 #include <imgui_stdlib.h>
@@ -54,6 +55,7 @@ void EditorApp::HandleBrushPicking() {
         }
     }
     m_SelectedBrush = found ? hit : UUID{0};
+    m_SoftwarePreviewDirty = true;
 }
 
 void EditorApp::ApplyClipTool() {
@@ -73,8 +75,9 @@ void EditorApp::ApplyClipTool() {
         m_Engine.GetBrushMap().AddBrush(front);
         m_Engine.GetBrushMap().AddBrush(back);
         m_Engine.GetBrushMap().MarkAllDirty();
-        m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), "assets/generated");
+        m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
         m_SelectedBrush = UUID{0};
+        m_SoftwarePreviewDirty = true;
         FW_LOG_INFO("Clipped brush into 2 pieces");
     } else {
         FW_LOG_WARN("Clip plane did not intersect the selected brush");
@@ -100,8 +103,9 @@ void EditorApp::ApplyCarveTool() {
     for (auto& b : results) m_Engine.GetBrushMap().AddBrush(b);
 
     m_Engine.GetBrushMap().MarkAllDirty();
-    m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), "assets/generated");
+    m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
     m_SelectedBrush = UUID{0};
+    m_SoftwarePreviewDirty = true;
     FW_LOG_INFO("Carved selected brush out of the level");
 }
 
@@ -134,7 +138,8 @@ void EditorApp::DrawHammerToolPanel() {
             b.Rebuild();
             m_Engine.GetBrushMap().AddBrush(b);
             m_Engine.GetBrushMap().MarkAllDirty();
-            m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), "assets/generated");
+            m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
+            m_SoftwarePreviewDirty = true;
         }
     } else if (m_BrushTool == BrushTool::Clip) {
         ImGui::TextWrapped("Select a brush, then Apply Clip to split it along a horizontal plane through its center.");
@@ -166,7 +171,8 @@ void EditorApp::DrawHammerToolPanel() {
             if (ImGui::Button("Delete Brush", ImVec2(-1, 0))) {
                 m_Engine.GetBrushMap().RemoveBrush(b->id);
                 m_SelectedBrush = UUID{0};
-                m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), "assets/generated");
+                m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
+                m_SoftwarePreviewDirty = true;
             }
             for (auto& face : b->faces) {
                 ImGui::PushID(&face);

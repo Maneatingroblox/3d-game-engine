@@ -4,6 +4,7 @@
 // ScriptComponent::properties), which the Lua side reads as `self.Properties.X`.
 #include "editor/EditorApp.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <fstream>
@@ -32,6 +33,10 @@ void EditorApp::DrawInspectorPanel() {
     }
 
     Entity entity(m_SelectedEntity, &m_Engine.GetScene().Registry());
+
+    // Any edit in this panel changes the rendered image; the CPU preview uses
+    // that flag to decide whether it must re-render.
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) m_SoftwarePreviewDirty = true;
 
     // Name
     std::string name = entity.Name();
@@ -110,7 +115,7 @@ void EditorApp::DrawInspectorPanel() {
                 ImGui::InputText("##mat", &mr.materialSlots[i]);
                 ImGui::PopID();
             }
-            if (ImGui::Button("+ Material Slot")) mr.materialSlots.push_back("assets/materials/default.fwmat");
+            if (ImGui::Button("+ Material Slot")) mr.materialSlots.push_back("assets/materials/dev_grey.fwmat");
         }
     }
 

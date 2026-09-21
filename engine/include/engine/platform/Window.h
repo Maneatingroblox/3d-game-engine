@@ -2,6 +2,11 @@
 // Win32 window wrapper. Owns the HWND, pumps the message loop, and forwards
 // input/resize events to whoever registered callbacks (the editor's ImGui
 // backend, and engine/platform/Input).
+//
+// On Windows the window can be presented through GDI (BlitSoftwareFrame) as
+// well as through the D3D11 swap chain: the software path is what guarantees
+// the editor shows *something* even when the GPU path is unavailable.
+// On other hosts (headless validation, tools/ui_shot) the class is inert.
 
 #include "engine/core/Base.h"
 #include <string>
@@ -20,6 +25,8 @@ struct WindowDesc {
     bool resizable = true;
     bool maximized = false;
 };
+
+#if FW_PLATFORM_WINDOWS
 
 class Window {
 public:
@@ -41,11 +48,19 @@ public:
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }
     bool IsMinimized() const { return m_Minimized; }
+    bool IsMaximized() const { return m_Maximized; }
 
-#if FW_PLATFORM_WINDOWS
     HWND Handle() const { return m_Hwnd; }
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-#endif
+
+    // ---- software presentation (GDI) ---------------------------------------
+    // Copies a top-down RGBA8 frame into a DIB section and blits it to the
+    // client area with BitBlt. This is the whole "GPU-less" display path: it
+    // needs no D3D11 device, no swap chain and no shaders, so the editor can
+    // always put pixels on screen. The last frame is remembered so WM_PAINT can
+    // repaint after the window was covered or resized.
+    void BlitSoftwareFrame(const u8* rgba, int width, int height);
+    bool HasSoftwareFrame() const { return m_SoftBitmap != nullptr; }
 
     // Fired on WM_SIZE with the new client-area size.
     std::function<void(int, int)> OnResize;
@@ -54,13 +69,58 @@ public:
     std::function<bool(void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam)> OnRawMessage;
 
 private:
+    void BlitSoftwareFrameTo(HDC target, int width, int height);
+
     int m_Width = 0, m_Height = 0;
     bool m_Minimized = false;
+    bool m_Maximized = false;
     bool m_Fullscreen = false;
-#if FW_PLATFORM_WINDOWS
     HWND m_Hwnd = nullptr;
     WINDOWPLACEMENT m_WindowedPlacement{};
-#endif
+
+    // Software (GDI) presentation surface.
+    HDC m_SoftDC = nullptr;
+    HBITMAP m_SoftBitmap = nullptr;
+    HGDIOBJ m_SoftOldBitmap = nullptr;
+    void* m_SoftBits = nullptr;
+    int m_SoftWidth = 0, m_SoftHeight = 0;
 };
+
+#else // !FW_PLATFORM_WINDOWS
+
+// Host/headless builds: there is no Win32 layer, so the window is a stub. Code
+// that owns a Window (Application, EditorApp) still compiles and links, which
+// is what lets the editor UI be rendered and screenshotted without a display
+// (see tools/ui_shot.cpp).
+class Window {
+public:
+    Window() = default;
+    ~Window() = default;
+
+    bool Create(const WindowDesc& desc) {
+        m_Width = desc.width;
+        m_Height = desc.height;
+        return false;  // no window on this host; callers fall back to headless
+    }
+    void Destroy() {}
+    bool PumpMessages() { return true; }
+    void SetTitle(const std::string&) {}
+    void Show() {}
+    void SetFullscreen(bool) {}
+    void Resize(int width, int height) { m_Width = width; m_Height = height; }
+    void BlitSoftwareFrame(const u8*, int, int) {}
+
+    int Width() const { return m_Width; }
+    int Height() const { return m_Height; }
+    bool IsMinimized() const { return false; }
+
+    std::function<void(int, int)> OnResize;
+    std::function<bool(void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam)> OnRawMessage;
+
+private:
+    int m_Width = 0, m_Height = 0;
+};
+
+#endif // FW_PLATFORM_WINDOWS
 
 } // namespace fw

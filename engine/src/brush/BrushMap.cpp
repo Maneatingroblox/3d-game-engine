@@ -1,6 +1,7 @@
 #include "engine/brush/BrushMap.h"
 #include "engine/scene/Scene.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
@@ -9,6 +10,44 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace fw {
+
+namespace {
+
+// Hammer-mode brushes name a *texture* per face (valve-style), while the
+// renderer binds a .fwmat material per submesh. This bridges the two: if the
+// slot already points at a .fwmat it is used as-is; otherwise a tiny material
+// file is generated next to the compiled brushes that references the texture as
+// its albedo map. Without this, brush faces silently fell back to the default
+// (untextured) material.
+std::string MaterialSlotForBrushTexture(const std::string& slot, const std::string& generatedDir) {
+    if (slot.empty()) return "assets/materials/dev_grey.fwmat";
+    if (slot.size() > 6 && slot.compare(slot.size() - 6, 6, ".fwmat") == 0) return slot;
+
+    const fs::path texturePath(slot);
+    const std::string stem = texturePath.stem().string();
+    if (stem.empty()) return "assets/materials/dev_grey.fwmat";
+
+    const fs::path outDir = fs::path(generatedDir) / "materials";
+    const fs::path materialPath = outDir / (stem + ".fwmat");
+    std::error_code ec;
+    if (!fs::exists(materialPath, ec)) {
+        fs::create_directories(outDir, ec);
+        std::ofstream out(materialPath);
+        if (out) {
+            const bool hasTexture = fs::exists(Paths::Resolve(slot), ec);
+            nlohmann::json j;
+            j["albedoColor"] = { 1.0, 1.0, 1.0, 1.0 };
+            j["metallic"] = 0.0;
+            j["roughness"] = 0.8;
+            j["albedoMap"] = hasTexture ? slot : std::string();
+            j["shaderAsset"] = "assets/shaders/Mesh.hlsl";
+            out << j.dump(2);
+        }
+    }
+    return materialPath.generic_string();
+}
+
+} // namespace
 
 Brush& BrushMap::AddBrush(Brush brush) {
     m_Brushes.push_back(std::move(brush));
@@ -54,7 +93,10 @@ void BrushMap::CompileToScene(Scene& scene, const std::string& generatedMeshDir,
 
         auto& mr = entity.AddOrReplace<MeshRendererComponent>();
         mr.meshAsset = meshPath;
-        mr.materialSlots = mesh.materialSlotNames;
+        mr.materialSlots.clear();
+        for (const auto& slot : mesh.materialSlotNames)
+            mr.materialSlots.push_back(MaterialSlotForBrushTexture(slot, generatedMeshDir));
+        if (mr.materialSlots.empty()) mr.materialSlots.push_back("assets/materials/dev_grey.fwmat");
 
         auto& bc = entity.AddOrReplace<BrushComponent>();
         bc.brushId = brush.id;

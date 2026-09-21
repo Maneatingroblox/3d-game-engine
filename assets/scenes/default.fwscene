@@ -1,0 +1,384 @@
+{
+  "entities": [
+    {
+      "Camera": {
+        "farClip": 2000.0,
+        "fovDeg": 60.0,
+        "isPrimary": true,
+        "nearClip": 0.05000000074505806,
+        "orthoSize": 10.0,
+        "orthographic": false
+      },
+      "id": 16424190332046895181,
+      "name": "Main Camera",
+      "parent": 0,
+      "position": [
+        5.0,
+        2.9000000953674316,
+        6.400000095367432
+      ],
+      "rotation": [
+        -0.11651340126991272,
+        0.2970053553581238,
+        0.0365404337644577,
+        0.9470360279083252
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "Light": {
+        "castsShadows": true,
+        "color": [
+          1.0,
+          0.7799999713897705,
+          0.5
+        ],
+        "innerConeDeg": 25.0,
+        "intensity": 4.0,
+        "isStatic": false,
+        "outerConeDeg": 35.0,
+        "range": 12.0,
+        "type": 1
+      },
+      "id": 18204360276262534134,
+      "name": "Point Light",
+      "parent": 0,
+      "position": [
+        3.0,
+        3.0,
+        2.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "MeshRenderer": {
+        "castShadows": true,
+        "lightmapAsset": "",
+        "materialSlots": [
+          "assets/materials/steel_blue.fwmat"
+        ],
+        "meshAsset": "builtin:cylinder",
+        "receiveShadows": true,
+        "useLightmap": false
+      },
+      "id": 12066385848607860066,
+      "name": "Cylinder",
+      "parent": 0,
+      "position": [
+        0.0,
+        0.5,
+        -2.4000000953674316
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "Collider": {
+        "collisionMeshAsset": "",
+        "halfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "height": 1.0,
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "shape": 0
+      },
+      "MeshRenderer": {
+        "castShadows": true,
+        "lightmapAsset": "",
+        "materialSlots": [
+          "assets/materials/dev_grey.fwmat"
+        ],
+        "meshAsset": "builtin:ramp",
+        "receiveShadows": true,
+        "useLightmap": false
+      },
+      "id": 9651275617044708207,
+      "name": "Ramp",
+      "parent": 0,
+      "position": [
+        2.5999999046325684,
+        0.5,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "Collider": {
+        "collisionMeshAsset": "",
+        "halfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "height": 1.0,
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "shape": 1
+      },
+      "MeshRenderer": {
+        "castShadows": true,
+        "lightmapAsset": "",
+        "materialSlots": [
+          "assets/materials/dev_grey.fwmat"
+        ],
+        "meshAsset": "builtin:sphere",
+        "receiveShadows": true,
+        "useLightmap": false
+      },
+      "RigidBody": {
+        "angularDamping": 0.05000000074505806,
+        "friction": 0.6000000238418579,
+        "gravityEnabled": true,
+        "isTrigger": false,
+        "linearDamping": 0.05000000074505806,
+        "mass": 1.0,
+        "motionType": 2,
+        "restitution": 0.10000000149011612
+      },
+      "id": 256191598491441937,
+      "name": "Sphere (dynamic)",
+      "parent": 0,
+      "position": [
+        0.0,
+        1.2000000476837158,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "Collider": {
+        "collisionMeshAsset": "",
+        "halfExtents": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "height": 1.0,
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "shape": 0
+      },
+      "MeshRenderer": {
+        "castShadows": true,
+        "lightmapAsset": "",
+        "materialSlots": [
+          "assets/materials/warm_red.fwmat"
+        ],
+        "meshAsset": "builtin:cube",
+        "receiveShadows": true,
+        "useLightmap": false
+      },
+      "RigidBody": {
+        "angularDamping": 0.05000000074505806,
+        "friction": 0.6000000238418579,
+        "gravityEnabled": true,
+        "isTrigger": false,
+        "linearDamping": 0.05000000074505806,
+        "mass": 1.0,
+        "motionType": 2,
+        "restitution": 0.10000000149011612
+      },
+      "id": 11713531276887686413,
+      "name": "Box (dynamic)",
+      "parent": 0,
+      "position": [
+        -2.0,
+        0.5,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "Collider": {
+        "collisionMeshAsset": "",
+        "halfExtents": [
+          12.0,
+          0.009999999776482582,
+          12.0
+        ],
+        "height": 1.0,
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "radius": 0.5,
+        "shape": 0
+      },
+      "MeshRenderer": {
+        "castShadows": false,
+        "lightmapAsset": "",
+        "materialSlots": [
+          "assets/materials/dev_grey.fwmat"
+        ],
+        "meshAsset": "builtin:plane",
+        "receiveShadows": true,
+        "useLightmap": false
+      },
+      "RigidBody": {
+        "angularDamping": 0.05000000074505806,
+        "friction": 0.6000000238418579,
+        "gravityEnabled": true,
+        "isTrigger": false,
+        "linearDamping": 0.05000000074505806,
+        "mass": 1.0,
+        "motionType": 0,
+        "restitution": 0.10000000149011612
+      },
+      "id": 17000381217562551278,
+      "name": "Ground",
+      "parent": 0,
+      "position": [
+        0.0,
+        -0.009999999776482582,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        24.0,
+        1.0,
+        24.0
+      ]
+    },
+    {
+      "Light": {
+        "castsShadows": true,
+        "color": [
+          1.0,
+          0.9599999785423279,
+          0.8999999761581421
+        ],
+        "innerConeDeg": 25.0,
+        "intensity": 2.5999999046325684,
+        "isStatic": false,
+        "outerConeDeg": 35.0,
+        "range": 10.0,
+        "type": 0
+      },
+      "id": 6589925425587313910,
+      "name": "Sun (Directional Light)",
+      "parent": 0,
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        -0.3417815864086151,
+        -0.28073301911354065,
+        -0.10776332020759583,
+        0.8903714418411255
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "SkyLight": {
+        "ambientColor": [
+          0.17000000178813934,
+          0.1899999976158142,
+          0.23000000417232513
+        ],
+        "ambientIntensity": 1.0,
+        "skyboxAsset": ""
+      },
+      "id": 6786791411834525292,
+      "name": "Sky",
+      "parent": 0,
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "name": "Default",
+  "version": 1
+}

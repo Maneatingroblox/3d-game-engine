@@ -44,8 +44,25 @@ bool RenderDevice::Init(Window& window, bool vsync) {
         requestedLevels, ARRAYSIZE(requestedLevels), D3D11_SDK_VERSION,
         &scd, &m_SwapChain, &m_Device, &obtained, &m_Context);
 
+#if defined(_DEBUG)
+    if (FAILED(hr) && (createFlags & D3D11_CREATE_DEVICE_DEBUG)) {
+        // The DirectX debug layer is an optional Windows feature; without it,
+        // requesting it makes device creation fail outright. Retry without it
+        // instead of leaving the user with a blank window.
+        FW_LOG_WARN("D3D11 device creation with the debug layer failed (hr=0x%08lX) - "
+                    "retrying without D3D11_CREATE_DEVICE_DEBUG", hr);
+        createFlags &= ~D3D11_CREATE_DEVICE_DEBUG;
+        hr = D3D11CreateDeviceAndSwapChain(
+            nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createFlags,
+            requestedLevels, ARRAYSIZE(requestedLevels), D3D11_SDK_VERSION,
+            &scd, &m_SwapChain, &m_Device, &obtained, &m_Context);
+    }
+#endif
+
     if (FAILED(hr)) {
-        FW_LOG_ERROR("D3D11CreateDeviceAndSwapChain failed (hr=0x%08lX)", hr);
+        FW_LOG_ERROR("D3D11CreateDeviceAndSwapChain failed (hr=0x%08lX) - no rendering is possible", hr);
+        // A missing GPU/driver is fatal for the GPU path; leave a clear marker
+        // in the log so it isn't mistaken for "the editor shows nothing".
         return false;
     }
 
@@ -101,10 +118,9 @@ void RenderDevice::Resize(int width, int height) {
     CreateSizeDependentResources(width, height);
 }
 
-void RenderDevice::BeginFrame(const float clearColor[4]) {
+void RenderDevice::BindBackBufferTargets() {
+    if (!m_Context || !m_BackBufferRTV) return;
     m_Context->OMSetRenderTargets(1, m_BackBufferRTV.GetAddressOf(), m_DepthStencilView.Get());
-    m_Context->ClearRenderTargetView(m_BackBufferRTV.Get(), clearColor);
-    m_Context->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
     D3D11_VIEWPORT vp{};
     vp.Width = (float)m_Width;
@@ -114,8 +130,32 @@ void RenderDevice::BeginFrame(const float clearColor[4]) {
     m_Context->RSSetViewports(1, &vp);
 }
 
+void RenderDevice::BeginFrame(const float clearColor[4]) {
+    BindBackBufferTargets();
+    m_Context->ClearRenderTargetView(m_BackBufferRTV.Get(), clearColor);
+    m_Context->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+}
+
 void RenderDevice::Present() {
-    m_SwapChain->Present(m_VSync ? 1 : 0, 0);
+    if (!m_SwapChain) return;
+
+    const HRESULT hr = m_SwapChain->Present(m_VSync ? 1 : 0, 0);
+    if (hr == DXGI_STATUS_OCCLUDED) return; // window hidden; nothing to do
+
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+        const HRESULT reason = m_Device ? m_Device->GetDeviceRemovedReason() : hr;
+        FW_LOG_ERROR("D3D11 device lost during Present (hr=0x%08lX, reason=0x%08lX) - "
+                     "the window will stop updating.", hr, reason);
+        m_DeviceLost = true;
+        return;
+    }
+    if (FAILED(hr)) {
+        // Report once, not every frame.
+        if (!m_PresentFailed) {
+            m_PresentFailed = true;
+            FW_LOG_ERROR("Swap chain Present() failed (hr=0x%08lX) - the window may stay blank", hr);
+        }
+    }
 }
 
 void RenderDevice::Shutdown() {

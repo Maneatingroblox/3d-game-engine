@@ -6,6 +6,7 @@
 
 #include "engine/core/Base.h"
 #include "engine/math/Math.h"
+#include "engine/render/RenderTypes.h"
 #include "engine/render/ShaderLibrary.h"
 #include "engine/render/MaterialSystem.h"
 #include "engine/asset/GpuMeshCache.h"
@@ -18,21 +19,9 @@ class Scene;
 class RenderDevice;
 class Window;
 
-struct RenderCamera {
-    vec3 position{0.0f};
-    mat4 view{1.0f};
-    mat4 proj{1.0f};
-};
-
-struct RenderSettings {
-    vec3 ambientColor{0.15f, 0.17f, 0.2f};
-    float ambientIntensity = 1.0f;
-    bool enableShadows = true;
-    int shadowMapResolution = 2048;
-    bool wireframe = false;
-    bool drawGrid = true;
-    bool drawColliders = false;
-};
+// RenderCamera / RenderSettings / camera matrix helpers live in RenderTypes.h
+// so the D3D11 renderer, the CPU reference renderer and the editor all agree
+// on the projection convention (RH view space, [0,1] depth).
 
 class Renderer {
 public:
@@ -55,6 +44,10 @@ public:
 
     void OnResize(int width, int height);
 
+    // False when assets/shaders/Mesh.hlsl could not be compiled - the caller
+    // (editor) then falls back to the CPU preview rather than drawing nothing.
+    bool MeshShaderAvailable();
+
     GpuMeshCache& MeshCache() { return m_MeshCache; }
     TextureLoader& Textures() { return m_TextureLoader; }
     MaterialSystem& Materials() { return m_MaterialSystem; }
@@ -64,6 +57,7 @@ private:
     void RenderShadowPass(Scene& scene, const mat4& lightViewProj);
     void RenderOpaquePass(Scene& scene, const RenderCamera& camera, const mat4& lightViewProj, const RenderSettings& settings);
     void RenderSkybox(Scene& scene, const RenderCamera& camera);
+    void RenderGrid(const RenderSettings& settings, int width, int height);
     mat4 ComputePrimaryLightViewProj(Scene& scene, const RenderCamera& camera);
 
     RenderDevice* m_Device;
@@ -83,6 +77,8 @@ private:
     ComPtr<ID3D11RasterizerState> m_WireframeRasterizer;
     ComPtr<ID3D11RasterizerState> m_ShadowRasterizer;
     ComPtr<ID3D11DepthStencilState> m_DefaultDepthState;
+    ComPtr<ID3D11DepthStencilState> m_SkyDepthState;   // depth test, no depth write (skybox)
+    ComPtr<ID3D11DepthStencilState> m_GridDepthState;  // depth test, no depth write (grid)
     ComPtr<ID3D11BlendState> m_OpaqueBlendState;
     ComPtr<ID3D11BlendState> m_TransparentBlendState;
 

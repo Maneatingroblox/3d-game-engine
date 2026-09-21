@@ -9,6 +9,63 @@ if you don't write a script for an entity, it just sits there. Attach a `.lua` s
 (whether it's a normal mesh entity or a Hammer-style brush) and the engine will call into it every
 frame, exactly like Godot/Unity/Source do.
 
+## Screenshots
+
+The Map Maker's window, rendered by the editor's own UI code and rasterized by the CPU
+canvas (`fwui`) - no GPU, no display and no hand-drawing involved:
+
+![Map Maker window](docs/screenshots/editor_ui.png)
+
+The editor's viewport renders the default starter scene the moment it opens - camera,
+sun, sky, ground and a few primitives you can immediately grab with the gizmo:
+
+![Map Maker viewport](docs/screenshots/viewport_scene_camera.png)
+
+![Default scene from above](docs/screenshots/viewport_top.png)
+
+These images are produced by the engine itself: `fwshot` renders any `.fwscene` with the
+CPU reference renderer (`engine/render/SoftwareRenderer.h`), which mirrors the D3D11
+renderer's camera math and passes. It needs no GPU, so screenshots can be generated on
+any machine, in CI, or from a headless build:
+
+```bash
+# whole scene, using the scene's own Main Camera
+./build-headless/bin/fwshot assets/scenes/default.fwscene docs/screenshots/viewport.png
+# other viewpoints / options
+./build-headless/bin/fwshot assets/scenes/default.fwscene top.png --camera top
+./build-headless/bin/fwshot assets/scenes/default.fwscene wire.png --wireframe --no-grid
+```
+
+If you want a picture of the *whole editor window* (all ImGui panels included), there are
+two ways. `fwui` builds the real `EditorApp` interface inside a headless ImGui context and
+rasterizes it - it runs anywhere (that is how `docs/screenshots/editor_ui.png` above was
+produced) and it prints how many draw lists/vertices the interface produced, so a change
+that empties the UI fails loudly instead of shipping:
+
+```bash
+./build-headless/bin/fwui --out docs/screenshots/editor_ui.png --frames 10
+# fwui: draw lists 10 | vertices 5558 | indices 9243 | UI coverage 100.0% | distinct colours 205
+# -> docs/screenshots/editor_ui.png           (full editor window)
+# -> docs/screenshots/editor_ui.viewport.png  (3D viewport only, CPU rendered)
+```
+
+On Windows the editor can screenshot itself without anyone at the keyboard:
+
+```powershell
+build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30
+# -> shots\editor.png           (the whole window as it is presented)
+# -> shots\editor.viewport.png  (3D viewport only, CPU rendered)
+```
+
+The game runtime has the same treatment - `fwui --game` renders the runtime shell (main
+menu, and with `--play` the world plus the in-game HUD) through the CPU path:
+
+![Game main menu](docs/screenshots/game_menu.png)
+
+![Game running](docs/screenshots/game_hud.png)
+
+The game executable accepts the same switches (`ForgeworksGame.exe --screenshot ... --play`).
+
 ## Feature overview
 
 - **Renderer**: Forward D3D11 renderer, dynamic lights (directional/point/spot) with shadow maps,
@@ -54,7 +111,9 @@ game/               Thin runtime executable: game.exe, loads main menu + a scene
 assets/             Sample game content: scenes, scripts, textures, models, sounds, shaders.
 third_party/        Vendored dependencies (see Third-Party Libraries below).
 cmake/              Helper CMake modules.
-docs/               Extra documentation (scripting API reference, file formats, build notes).
+tools/              Build tools (fwshot: scene -> PNG screenshot renderer).
+docs/               Extra documentation (scripting API reference, file formats, build notes)
+                    incl. docs/screenshots/.
 ```
 
 ## Building (Windows, Visual Studio 2026)
@@ -83,6 +142,128 @@ Run the editor, open/create a scene under `assets/scenes`, and press **Play** to
 physics/scripts/audio running in-editor. Use the **Hammer Mode** button in the toolbar to switch
 the viewport into brush editing.
 
+### What you should see on first launch
+
+The editor opens `assets/scenes/default.fwscene`. If that file does not exist yet (fresh
+clone), it is generated - together with `assets/materials/*.fwmat`, `assets/scripts/spin.lua`
+and the dev texture `assets/textures/dev/dev_grey.png` - so the map maker never starts on an
+empty void. The starter scene contains a directional sun, a sky light, a 20x20m ground, a
+dynamic box/sphere, a cylinder, a ramp, a point light and a `Main Camera`, plus a matching
+ground brush for Hammer mode.
+
+The viewport shows the scene, a ground grid (red X axis, blue Z axis) and an info overlay:
+renderer mode, camera position/speed, entity count and the current mouse position. The dock
+layout (Hierarchy / Viewport / Inspector / Assets / Console) is built automatically the first
+time the editor runs.
+
+Viewport controls: **RMB drag** looks, **WASD/QE** move (no button needed), **Shift** = fast,
+**mouse wheel** = fly speed, **F** = frame the selection, **F12** = save a viewport PNG to
+`assets/screenshots/viewport.png`.
+
+### Why the editor could show nothing at all (fixed)
+
+Two independent bugs made the Map Maker open as an empty window, and both are
+worth knowing about because they are invisible from the outside:
+
+1. **The interface was drawn into the wrong texture.** `ImGui_ImplDX11_RenderDrawData()`
+   does not set a render target - it draws into whatever is currently bound - and the
+   editor renders its 3D viewport into an off-screen texture. The viewport therefore
+   left *its own* render target bound, the whole UI was drawn into that texture
+   (a feedback loop), and the back buffer kept only the clear colour. Every D3D11
+   call reported success, D3D11 presented a "valid" frame of nothing, and no log
+   line could explain it. `RenderDevice::BindBackBufferTargets()` is now called
+   after the scene pass and before ImGui, and the startup log prints a
+   **Visibility check** line (distinct colours in the presented frame) every so
+   often: `1 distinct colour` means the window is a flat fill, `>3` means there is
+   real content.
+2. **A broken shader killed the GPU viewport.** `assets/shaders/Grid.hlsl` used
+   `float line = ...`, and `line` is a reserved HLSL keyword (geometry-shader
+   primitives), so `D3DCompile` rejected the grid shader. The editor handled that by
+   falling back to the CPU preview, which was fine - except it also recompiled and
+   re-logged the failure every frame. Failed shaders are now cached as failures, and
+   the headless test suite lints every shader in `assets/shaders` for reserved
+   keywords, missing entry points, unbalanced braces and non-ASCII bytes, so this
+   class of bug fails on any machine instead of only on Windows at run time.
+
+The GPUs-less guarantee from the previous section stays: if the GPU path cannot draw,
+the editor switches itself to CPU rendering, and that fallback now recreates the
+window (a window that has hosted a DXGI flip-model swap chain ignores GDI painting
+once the swap chain is released, which is why the fallback used to switch while the
+window still showed nothing).
+
+### "The editor starts but I see nothing"
+
+It cannot happen silently any more, and there is a switch that rules the GPU out entirely:
+
+```powershell
+build\bin\ForgeworksEditor.exe --software            # no Direct3D at all: CPU frame + GDI blit
+```
+
+`--software` never creates a D3D11 device, a swap chain or a shader. The whole frame - the
+CPU-rendered 3D viewport *and* the entire ImGui interface - is rasterized by
+`engine/render/SoftCanvas.h` and blitted to the window with a single `BitBlt`. If the GPU
+path is unavailable (broken/old driver, virtual machine, remote desktop, missing GPU) the
+editor now takes that path **automatically** instead of opening an empty window, logs why,
+and puts `[CPU rendering]` in the window title.
+
+If something *does* go wrong, it is reported three ways - none of them a blank window:
+
+1. **In the window**: if start-up fails (`OnInit()` returns false, the device cannot be
+   created, ...) the editor shows a diagnostics screen with the reason, the project root, the
+   log file path and the log tail, plus a Quit button. Use `--software` to get the full
+   interface regardless.
+2. **In a console**: `build\bin\ForgeworksEditor.exe --console` attaches one and echoes the log.
+3. **In a file**: the editor always writes `build\bin\forgeworks.log` (flushed per line, so a
+   crash keeps the tail). It records the resolved project root, window and swap chain sizes,
+   every shader compilation, D3D11/Present errors, the active presentation path and a
+   first-frame report (is ImGui producing draw data?):
+
+```powershell
+build\bin\ForgeworksEditor.exe --reset-layout                     # if the layout ever looks wrong
+build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30   # capture the window, then look at it
+Get-Content build\bin\forgeworks.log -Wait                       # tail the log while the editor runs
+```
+
+The window title carries the live renderer and the build id (`[GPU rendering] a1b2c3d`), so a
+screenshot always says which binary produced it. If the title bar shows no build id, the binary
+is older than that feature - rebuild before investigating anything else.
+
+The window is self-healing: if the GPU path presents frames with no content in them (every
+Direct3D call can report success while the window shows nothing but the clear colour), the
+editor reads the presented frame back, detects that it is a flat fill, says so in the log and
+switches itself to the CPU path. The window title always shows which path is live and which
+build this is, e.g. `Forgeworks Map Maker  [CPU rendering] 8f75c67`.
+
+Command line switches (both executables): `--scene`, `--root`, `--log <file>`, `--console`,
+`--software`, `--reset-layout` (forget the saved ImGui layout), `--screenshot <png>` +
+`--frames <n>` (editor/game render N frames, save the window, exit), `--play` (game: skip the
+menu), `--help`.
+
+`shots\editor.viewport.png` is rendered by the CPU renderer, so even when the GPU path is
+broken it shows what the scene *should* look like - that pair of images separates "the window
+never drew" from "the scene/camera is the problem".
+
+### If the 3D viewport is ever blank
+
+1. Look at the **Console** panel - a missing/failed HLSL shader, a missing scene file or a
+   failed render-target creation all log an explicit error there.
+2. Enable **View > Viewport Info Overlay**: the top-left line names the active renderer and
+   says whether the grid/wireframe are on, so an "empty" viewport is immediately explained.
+3. Switch to **View > CPU Viewport Preview**. This renders the same scene with the CPU
+   reference renderer, which needs no GPU at all. If the CPU preview shows geometry but the
+   GPU view is blank, the problem is in the D3D11 path (shaders/device); if *both* are blank,
+   the camera is probably pointing somewhere empty - press **F** to frame the selection or
+   **View > Reset Camera**.
+4. The editor switches to the CPU preview automatically (and says so in the Console) when the
+   render target or the mesh shader is unavailable, so a broken GPU path degrades to "slower
+   but visible" instead of "blank".
+
+Content paths are resolved against the project root (the folder containing `assets/`), which
+is auto-detected from the executable location, the working directory or the
+`FORGEWORKS_ROOT` environment variable - so launching `build\bin\ForgeworksEditor.exe` by
+double-clicking it finds its assets too. Both executables also accept `--root <dir>` and
+`--help`.
+
 If you are still on Visual Studio 2022, swap the generator back to `-G "Visual Studio 17 2022"`. That still works; no other project changes are needed (`cmake_minimum_required` in `CMakeLists.txt` remains 3.20).
 
 ## Headless / CI build (Linux, used for validating engine logic)
@@ -96,8 +277,14 @@ platform. This is how the logic in this repository is validated without a Window
 ```bash
 cmake -S . -B build-headless -DFORGEWORKS_HEADLESS=ON
 cmake --build build-headless -j
-./build-headless/engine_tests/engine_tests
+./build-headless/bin/engine_tests          # unit/smoke tests
+./build-headless/bin/fwshot assets/scenes/default.fwscene out.png
 ```
+
+`engine_tests` also covers the rendering-visible behaviour: camera/projection convention,
+primitive winding (backface correctness) and a "the viewport is not blank" test that renders
+the starter scene with the CPU reference renderer, asserts real geometry is covered, and
+writes `test_output/viewport.png` for eyeballing.
 
 ## Scripting API
 

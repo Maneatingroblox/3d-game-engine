@@ -36,16 +36,48 @@ if(MSVC)
     add_compile_options(/MP /W3 /permissive-)
 endif()
 
+# Build identifier: the short commit this binary was built from (plus "+" when
+# the tree had local changes). It is logged at start-up and shown in the window
+# title, so a screenshot or log from someone else's machine identifies the build
+# instead of having to be guessed.
+set(FORGEWORKS_BUILD_ID "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE FORGEWORKS_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE FORGEWORKS_GIT_RESULT)
+    if(FORGEWORKS_GIT_RESULT EQUAL 0 AND FORGEWORKS_GIT_COMMIT)
+        set(FORGEWORKS_BUILD_ID "${FORGEWORKS_GIT_COMMIT}")
+        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE FORGEWORKS_GIT_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(FORGEWORKS_GIT_DIRTY)
+            string(APPEND FORGEWORKS_BUILD_ID "+")
+        endif()
+    endif()
+endif()
+message(STATUS "Forgeworks build id: ${FORGEWORKS_BUILD_ID}")
+add_compile_definitions(FW_BUILD_ID="${FORGEWORKS_BUILD_ID}")
+
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
+# The game runtime shell (fw_game) is platform independent too and is linked by
+# fwui to screenshot the game UI; its Windows executable is gated separately.
+add_subdirectory(game)
+
+# The editor UI library (fw_editor) is platform independent and is also used by
+# tools/fwui to screenshot the interface on the CPU, so it is built in every
+# configuration; the Windows executable inside it is gated separately.
+add_subdirectory(editor)
+
+# Command line screenshot tool (fwshot): renders a .fwscene to a PNG using the
+# CPU reference renderer, so it works without a GPU / on any platform. This is
+# what produces the images in docs/screenshots/.
+add_subdirectory(tools)
+
 if(FORGEWORKS_HEADLESS)
     add_subdirectory(engine_tests)
-else()
-    if(FORGEWORKS_BUILD_EDITOR)
-        add_subdirectory(editor)
-    endif()
-    if(FORGEWORKS_BUILD_GAME)
-        add_subdirectory(game)
-    endif()
 endif()

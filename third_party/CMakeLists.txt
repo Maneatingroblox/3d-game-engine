@@ -106,25 +106,33 @@ add_library(fw_jolt INTERFACE)
 target_link_libraries(fw_jolt INTERFACE Jolt)
 target_include_directories(fw_jolt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/jolt)
 
-# ---- Dear ImGui + ImGuizmo + Win32/DX11 backends (Windows / editor build only) ----
+# ---- Dear ImGui + ImGuizmo (platform independent core, built everywhere) ----
+# The core library and ImGuizmo contain no platform code, so tools that render
+# the editor UI on the CPU (fwui) and the headless validation build use the same
+# Dear ImGui the editor uses.
+add_library(fw_imgui_core STATIC
+    imgui/imgui.cpp
+    imgui/imgui_draw.cpp
+    imgui/imgui_tables.cpp
+    imgui/imgui_widgets.cpp
+    imgui/imgui_demo.cpp
+    imgui/misc/cpp/imgui_stdlib.cpp
+    imguizmo/ImGuizmo.cpp
+)
+target_include_directories(fw_imgui_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
+    ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/imguizmo
+)
+
+# ---- Win32 + DX11 backends (Windows / editor build only) ----
 if(NOT FORGEWORKS_HEADLESS)
     add_library(fw_imgui STATIC
-        imgui/imgui.cpp
-        imgui/imgui_draw.cpp
-        imgui/imgui_tables.cpp
-        imgui/imgui_widgets.cpp
-        imgui/imgui_demo.cpp
-        imgui/misc/cpp/imgui_stdlib.cpp
         imgui/backends/imgui_impl_win32.cpp
         imgui/backends/imgui_impl_dx11.cpp
-        imguizmo/ImGuizmo.cpp
     )
-    target_include_directories(fw_imgui PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends
-        ${CMAKE_CURRENT_SOURCE_DIR}/imgui/misc/cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/imguizmo
-    )
+    target_link_libraries(fw_imgui PUBLIC fw_imgui_core)
     if(WIN32)
         # The Windows SDK (MSVC) ships an unversioned d3dcompiler.lib, but
         # mingw-w64 (including clang -target *-windows-gnu, e.g. building
