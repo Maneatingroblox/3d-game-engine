@@ -36,6 +36,31 @@ if(MSVC)
     add_compile_options(/MP /W3 /permissive-)
 endif()
 
+# Build identifier: the short commit this binary was built from (plus "+" when
+# the tree had local changes). It is logged at start-up and shown in the window
+# title, so a screenshot or log from someone else's machine identifies the build
+# instead of having to be guessed.
+set(FORGEWORKS_BUILD_ID "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short=7 HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE FORGEWORKS_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET RESULT_VARIABLE FORGEWORKS_GIT_RESULT)
+    if(FORGEWORKS_GIT_RESULT EQUAL 0 AND FORGEWORKS_GIT_COMMIT)
+        set(FORGEWORKS_BUILD_ID "${FORGEWORKS_GIT_COMMIT}")
+        execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            OUTPUT_VARIABLE FORGEWORKS_GIT_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET)
+        if(FORGEWORKS_GIT_DIRTY)
+            string(APPEND FORGEWORKS_BUILD_ID "+")
+        endif()
+    endif()
+endif()
+message(STATUS "Forgeworks build id: ${FORGEWORKS_BUILD_ID}")
+add_compile_definitions(FW_BUILD_ID="${FORGEWORKS_BUILD_ID}")
+
 add_subdirectory(third_party)
 add_subdirectory(engine)
 

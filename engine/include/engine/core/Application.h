@@ -18,6 +18,7 @@
 #include "engine/render/RenderDevice.h"
 #include "engine/render/SoftCanvas.h"
 #include "engine/platform/Input.h"
+#include <algorithm>
 #include <chrono>
 #include <string>
 
@@ -73,6 +74,12 @@ public:
     // logged (window size, swap chain, ImGui draw data). 0 disables it.
     void SetStartupReportFrame(int frame) { m_StartupReportFrame = frame; }
 
+    // Deletes the saved ImGui layout (imgui.ini) before the UI starts, so a
+    // layout written by an older/broken build cannot hide every panel.
+    void SetResetLayout(bool reset) { m_ResetLayout = reset; }
+    // The saved-layout file used by ImGui (next to the executable).
+    const std::string& LayoutFilePath() const { return m_IniPath; }
+
     int FrameIndex() const { return m_FrameIndex; }
 
 protected:
@@ -112,6 +119,16 @@ private:
     // Drops the GPU path and continues on the CPU canvas (keeps the window alive
     // instead of exiting into a blank screen).
     void SwitchToSoftware(const std::string& reason);
+    // Reads back the last presented frame and reports whether it contains
+    // anything (more than a couple of distinct colours). This is the empirical
+    // "is the user actually seeing something?" check: it catches failures the
+    // API calls report as success (e.g. the ImGui D3D11 backend's device objects
+    // silently failing to create, which leaves the window showing nothing but the
+    // clear colour).
+    bool GpuFrameHasContent(int* distinctColors = nullptr);
+    // Runs that check on a schedule and falls back to the CPU path when the GPU
+    // path is presenting flat frames.
+    void UpdateVisibilityWatchdog();
     // Shown instead of the app's own UI when OnInit() failed: the reason, the
     // environment and the log tail, inside the window. A start-up failure is
     // now something the user can read, never an empty window.
@@ -125,15 +142,26 @@ private:
     int m_ScreenshotFrames = 0;
     int m_FrameIndex = 0;
 
+    std::string m_Title = "Forgeworks";
     std::string m_LogFile;
     bool m_ConsoleOutput = false;
     int m_StartupReportFrame = 5;
     bool m_StartupReported = false;
     void OpenLogFileIfNeeded();
     void LogStartupReport();
+    void UpdateWindowTitle(const std::string& title);
 
     bool m_ForceSoftware = false;
     bool m_SoftwareMode = false;
+    bool m_ResetLayout = false;
+    std::string m_IniPath;
+    int m_NextWatchdogFrame = 8;
+    int m_WatchdogChecks = 0;
+    int m_BlankFrameStreak = 0;
+#if FW_PLATFORM_WINDOWS
+    ComPtr<ID3D11Texture2D> m_WatchdogStaging;
+    int m_WatchdogStagingWidth = 0, m_WatchdogStagingHeight = 0;
+#endif
     bool m_PlatformBackendReady = false;
     bool m_FailureScreen = false;
     std::string m_FailureReason;

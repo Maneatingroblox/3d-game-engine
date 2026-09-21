@@ -504,14 +504,22 @@ void EditorApp::OnImGui() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    // A layout saved by an older build can mark the host window collapsed (it has
+    // no title bar to un-collapse from), which hides the dockspace - and with it
+    // every panel. Force it expanded.
+    ImGui::SetNextWindowCollapsed(false, ImGuiCond_Always);
     ImGui::Begin("EditorDockspaceHost", nullptr, hostFlags);
     ImGui::PopStyleVar(3);
 
     DrawMenuBar();
 
+    // Build the default layout whenever the dockspace has no node: no saved
+    // layout, a saved layout from another version, or a dock node that was lost
+    // (e.g. after the presentation path was switched and ImGui was recreated).
     ImGuiID dockspaceId = ImGui::GetID("EditorDockspace");
-    if (!m_DefaultLayoutBuilt && ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
+    if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
         BuildDefaultLayout(dockspaceId);
+        m_LayoutCheckCountdown = 4;
     }
     ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
     ImGui::End();
@@ -536,13 +544,15 @@ void EditorApp::OnImGui() {
         m_LayoutCheckCountdown--;
         if (m_LayoutCheckCountdown == 0) {
             ImGuiWindow* viewportWindow = ImGui::FindWindowByName("Viewport");
+            ImGuiWindow* hostWindow = ImGui::FindWindowByName("EditorDockspaceHost");
             const bool docked = viewportWindow && viewportWindow->DockNode != nullptr;
             const int tabs = (docked && viewportWindow->DockNode->TabBar)
                                  ? viewportWindow->DockNode->TabBar->Tabs.Size : 0;
             const bool visible = viewportWindow && viewportWindow->Size.x >= 64.0f && viewportWindow->Size.y >= 64.0f;
-            if (!docked || !visible || tabs > 1) {
-                FW_LOG_WARN("Viewport was not visible (docked=%d tabs=%d visible=%d) - rebuilding the dock layout",
-                            docked ? 1 : 0, tabs, visible ? 1 : 0);
+            const bool hostOk = hostWindow && hostWindow->Size.x >= 64.0f && hostWindow->Size.y >= 64.0f;
+            if (!docked || !visible || tabs > 1 || !hostOk) {
+                FW_LOG_WARN("Viewport was not visible (docked=%d tabs=%d visible=%d host=%d) - rebuilding the dock layout",
+                            docked ? 1 : 0, tabs, visible ? 1 : 0, hostOk ? 1 : 0);
                 BuildDefaultLayout(ImGui::GetID("EditorDockspace"));
             }
         }
@@ -624,7 +634,7 @@ void EditorApp::DrawMenuBar() {
             if (ImGui::MenuItem("Reset Camera")) ResetEditorCamera();
             if (ImGui::MenuItem("Frame Selection", "F")) m_RequestFrameSelection = true;
             ImGui::Separator();
-            if (ImGui::MenuItem("Rebuild Layout")) { m_DefaultLayoutBuilt = false; }
+            if (ImGui::MenuItem("Rebuild Layout")) BuildDefaultLayout(ImGui::GetID("EditorDockspace"));
             ImGui::Separator();
             ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);
             ImGui::EndMenu();

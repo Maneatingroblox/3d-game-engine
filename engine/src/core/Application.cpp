@@ -83,10 +83,18 @@ void Application::LogStartupReport() {
                      m_Window.Width(), m_Window.Height());
 }
 
+void Application::UpdateWindowTitle(const std::string& title) {
+    // The title always says which presentation path is live and which build this
+    // is - a screenshot of the window then identifies both without a log.
+    m_Window.SetTitle(title + (m_SoftwareMode ? "  [CPU rendering] " : "  [GPU rendering] ") + FW_BUILD_ID);
+}
+
 bool Application::RunInternal(const std::string& title, int width, int height, bool maximized) {
+    m_Title = title;
     OpenLogFileIfNeeded();
     FW_LOG_INFO("=== Forgeworks starting: %s (%dx%d, maximized=%d, software=%d) ===",
                 title.c_str(), width, height, maximized ? 1 : 0, m_ForceSoftware ? 1 : 0);
+    FW_LOG_INFO("Build %s | log file: %s", FW_BUILD_ID, Log::Get().FilePath().c_str());
 
     WindowDesc desc;
     desc.title = title;
@@ -161,8 +169,7 @@ bool Application::RunInternal(const std::string& title, int width, int height, b
     }
 
     const bool started = OnInit();
-    if (m_SoftwareMode)
-        m_Window.SetTitle(title + "  [CPU rendering]");
+    UpdateWindowTitle(title);
 
     if (!started) {
         FW_LOG_ERROR("Application::OnInit() returned false. Showing the diagnostics screen "
@@ -191,6 +198,7 @@ void Application::SwitchToSoftware(const std::string& reason) {
     InitImGui(false);
     FW_LOG_WARN("Switched to the CPU presentation path (%s) - the window stays usable without D3D11",
                 reason.c_str());
+    UpdateWindowTitle(m_Title);
 }
 
 bool Application::InitImGui(bool useDx11) {
@@ -202,6 +210,21 @@ bool Application::InitImGui(bool useDx11) {
     // windows); the CPU canvas draws a single window, so leave them off there.
     if (useDx11) io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     ImGui::StyleColorsDark();
+
+    // The saved layout lives next to the executable: without this ImGui writes
+    // imgui.ini into whatever the working directory happens to be, so the same
+    // build picks up different (possibly broken) layouts depending on how it was
+    // launched. --reset-layout deletes it before anything reads it.
+    if (!Paths::ExecutableDir().empty())
+        m_IniPath = (std::filesystem::path(Paths::ExecutableDir()) / "imgui_layout.ini").string();
+    else
+        m_IniPath = "imgui_layout.ini";
+    if (m_ResetLayout) {
+        std::error_code ec;
+        const bool removed = std::filesystem::remove(m_IniPath, ec);
+        FW_LOG_INFO("--reset-layout: %s %s", removed ? "deleted" : "nothing to delete at", m_IniPath.c_str());
+    }
+    io.IniFilename = m_IniPath.c_str();
 
     if (ImGui_ImplWin32_Init(m_Window.Handle())) {
         m_PlatformBackendReady = true;
@@ -308,6 +331,114 @@ void Application::DrawFailureScreen() {
     ImGui::End();
 }
 
+// ---------------------------------------------------------------------------
+// Visibility watchdog
+// ---------------------------------------------------------------------------
+// Every API call can report success while the window still shows nothing: the
+// ImGui D3D11 backend creates its shaders and font texture lazily and returns ok
+// even when that fails, and a driver can present frames that are flat. Rather
+// than trusting return codes, the presented frame is read back and checked for
+// content: a real editor frame (interface + viewport) has hundreds of distinct
+// colours, a broken one has exactly one (the clear colour).
+bool Application::GpuFrameHasContent(int* distinctColors) {
+#if FW_PLATFORM_WINDOWS
+    if (distinctColors) *distinctColors = -1;
+    if (!m_Device.SwapChain() || !m_Device.Device() || !m_Device.Context()) return true;  // cannot tell
+
+    ComPtr<ID3D11Texture2D> backBuffer;
+    if (FAILED(m_Device.SwapChain()->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return true;
+    D3D11_TEXTURE2D_DESC desc{};
+    backBuffer->GetDesc(&desc);
+
+    if (!m_WatchdogStaging || m_WatchdogStagingWidth != (int)desc.Width || m_WatchdogStagingHeight != (int)desc.Height) {
+        m_WatchdogStaging.Reset();
+        D3D11_TEXTURE2D_DESC stagingDesc = desc;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.MiscFlags = 0;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MipLevels = 1;
+        stagingDesc.ArraySize = 1;
+        stagingDesc.SampleDesc.Count = 1;
+        if (FAILED(m_Device.Device()->CreateTexture2D(&stagingDesc, nullptr, &m_WatchdogStaging))) {
+            FW_LOG_WARN("Visibility check: could not create the read-back texture");
+            return true;
+        }
+        m_WatchdogStagingWidth = (int)desc.Width;
+        m_WatchdogStagingHeight = (int)desc.Height;
+    }
+
+    m_Device.Context()->CopyResource(m_WatchdogStaging.Get(), backBuffer.Get());
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(m_Device.Context()->Map(m_WatchdogStaging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        FW_LOG_WARN("Visibility check: could not map the read-back texture");
+        return true;
+    }
+
+    // Stride-sample ~160x90 points and count distinct colours (5 bits/channel).
+    // Enough to tell "a flat fill" from "an interface", and cheap.
+    const int stepX = std::max(1, (int)desc.Width / 160);
+    const int stepY = std::max(1, (int)desc.Height / 90);
+    bool seen[1 << 15] = {};
+    int distinct = 0, samples = 0;
+    for (UINT y = 0; y < desc.Height; y += (UINT)stepY) {
+        const u8* row = (const u8*)mapped.pData + (size_t)y * mapped.RowPitch;
+        for (UINT x = 0; x < desc.Width; x += (UINT)stepX) {
+            const u8* px = row + (size_t)x * 4u;
+            const int key = ((px[0] >> 3) << 10) | ((px[1] >> 3) << 5) | (px[2] >> 3);
+            if (!seen[key]) { seen[key] = true; distinct++; }
+            samples++;
+        }
+    }
+    m_Device.Context()->Unmap(m_WatchdogStaging.Get(), 0);
+
+    if (distinctColors) *distinctColors = distinct;
+    FW_LOG_INFO("Visibility check (frame %d): %d distinct colour(s) over %d sampled pixel(s)",
+                m_FrameIndex, distinct, samples);
+    return distinct > 3;
+#else
+    if (distinctColors) *distinctColors = -1;
+    return true;
+#endif
+}
+
+void Application::UpdateVisibilityWatchdog() {
+    if (m_SoftwareMode || m_FailureScreen) return;
+    if (m_FrameIndex < m_NextWatchdogFrame) return;
+
+    int distinct = -1;
+    const bool hasContent = GpuFrameHasContent(&distinct);
+
+    if (hasContent) {
+        m_BlankFrameStreak = 0;
+        m_WatchdogChecks++;
+        // Early after start-up, once more shortly after, then rarely: the
+        // read-back costs a GPU sync, so this is not a per-frame check.
+        m_NextWatchdogFrame = m_FrameIndex + (m_WatchdogChecks < 3 ? 32 : 900);
+        return;
+    }
+
+    // Two consecutive blank reads before acting: one flat frame can happen
+    // during a resize or while the swap chain is being recreated.
+    m_BlankFrameStreak++;
+    if (m_BlankFrameStreak < 2) {
+        m_NextWatchdogFrame = m_FrameIndex + 3;
+        return;
+    }
+
+    {
+        FW_LOG_ERROR("The GPU path is presenting flat frames (frame %d: %d distinct colour(s)) - the window is "
+                     "showing nothing but the clear colour. ImGui draw data: %d list(s), %d vert(s). Every Direct3D "
+                     "call reported success, so the failure is inside the GPU path itself (usually the ImGui D3D11 "
+                     "backend's shaders or font texture failing to create).",
+                     m_FrameIndex, distinct,
+                     ImGui::GetDrawData() ? ImGui::GetDrawData()->CmdListsCount : 0,
+                     ImGui::GetDrawData() ? ImGui::GetDrawData()->TotalVtxCount : 0);
+        SwitchToSoftware("the GPU path presents blank frames");
+    }
+}
+
 void Application::MainLoop() {
     using clock = std::chrono::high_resolution_clock;
     auto lastTime = clock::now();
@@ -362,6 +493,7 @@ void Application::MainLoop() {
             m_Window.BlitSoftwareFrame(m_Canvas.Pixels(), m_Canvas.Width(), m_Canvas.Height());
         } else {
             m_Device.Present();
+            UpdateVisibilityWatchdog();
         }
     }
 

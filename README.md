@@ -181,13 +181,25 @@ If something *does* go wrong, it is reported three ways - none of them a blank w
    first-frame report (is ImGui producing draw data?):
 
 ```powershell
+build\bin\ForgeworksEditor.exe --reset-layout                     # if the layout ever looks wrong
 build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30   # capture the window, then look at it
-Get-Content build\bin\forgeworks.log -Wait          # tail the log while the editor runs
+Get-Content build\bin\forgeworks.log -Wait                       # tail the log while the editor runs
 ```
 
+The window title carries the live renderer and the build id (`[GPU rendering] a1b2c3d`), so a
+screenshot always says which binary produced it. If the title bar shows no build id, the binary
+is older than that feature - rebuild before investigating anything else.
+
+The window is self-healing: if the GPU path presents frames with no content in them (every
+Direct3D call can report success while the window shows nothing but the clear colour), the
+editor reads the presented frame back, detects that it is a flat fill, says so in the log and
+switches itself to the CPU path. The window title always shows which path is live and which
+build this is, e.g. `Forgeworks Map Maker  [CPU rendering] 8f75c67`.
+
 Command line switches (both executables): `--scene`, `--root`, `--log <file>`, `--console`,
-`--software`, `--screenshot <png>` + `--frames <n>` (editor/game render N frames, save the
-window, exit), `--play` (game: skip the menu), `--help`.
+`--software`, `--reset-layout` (forget the saved ImGui layout), `--screenshot <png>` +
+`--frames <n>` (editor/game render N frames, save the window, exit), `--play` (game: skip the
+menu), `--help`.
 
 `shots\editor.viewport.png` is rendered by the CPU renderer, so even when the GPU path is
 broken it shows what the scene *should* look like - that pair of images separates "the window

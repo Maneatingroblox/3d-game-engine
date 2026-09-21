@@ -17,6 +17,7 @@ struct CommandLine {
     int frames = 12;              // --frames <n> (let ImGui settle before capture)
     bool console = false;         // --console: show a console window with the log
     bool software = false;        // --software: CPU presentation path (no D3D11 at all)
+    bool resetLayout = false;   // --reset-layout: forget the saved ImGui layout
     bool help = false;
 };
 
@@ -51,14 +52,15 @@ CommandLine ParseCommandLine() {
         else if (a == "--log") next(cl.logPath);
         else if (a == "--console") cl.console = true;
         else if (a == "--software") cl.software = true;
+        else if (a == "--reset-layout") cl.resetLayout = true;
         else if (a == "--help" || a == "-h" || a == "/?") cl.help = true;
     }
     return cl;
 }
 
 void PrintUsage() {
-    const char* usage =
-        "Forgeworks Map Maker\n"
+    static const std::string usageText =
+        std::string("Forgeworks Map Maker (build ") + FW_BUILD_ID + ")\n"
         "\n"
         "Usage: ForgeworksEditor.exe [options]\n"
         "  --scene <file.fwscene>   Scene to open (default: assets/scenes/default.fwscene)\n"
@@ -67,6 +69,8 @@ void PrintUsage() {
         "                           to a PNG and exit (useful for CI / bug reports)\n"
         "  --frames <n>             Frames to render before the screenshot (default 12)\n"
         "  --console                Attach a console window and echo the log to it\n"
+        "  --reset-layout           Delete the saved ImGui layout (imgui_layout.ini)\n"
+        "                           and rebuild the default dock layout\n"
         "  --software               Do not use Direct3D at all: render the whole editor\n"
         "                           (viewport + interface) on the CPU and blit it to the\n"
         "                           window with GDI. Use this on a machine with a broken\n"
@@ -79,8 +83,12 @@ void PrintUsage() {
         "looks empty or the process exits immediately, read that file first - it\n"
         "records the project root, window/swap chain sizes, shader compilation, the\n"
         "first-frame report and any D3D11 error. If start-up fails, the reason and\n"
-        "the log tail are also shown inside the window itself.\n";
-    MessageBoxA(nullptr, usage, "Forgeworks Map Maker", MB_OK | MB_ICONINFORMATION);
+        "the log tail are also shown inside the window itself.\n"
+        "\n"
+        "The window title shows the live renderer and the build, e.g.\n"
+        "  Forgeworks Map Maker  [GPU rendering] a1b2c3d\n"
+        "so a screenshot identifies the exact binary.";
+    MessageBoxA(nullptr, usageText.c_str(), "Forgeworks Map Maker", MB_OK | MB_ICONINFORMATION);
 }
 
 } // namespace
@@ -97,6 +105,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (!cl.logPath.empty()) app.SetLogFile(cl.logPath);
     if (cl.console) app.SetConsoleOutput(true);
     if (cl.software) app.SetSoftwareMode(true);
+    if (cl.resetLayout) app.SetResetLayout(true);
 
     if (!cl.screenshotPath.empty()) {
         FW_LOG_INFO("Screenshot mode: rendering %d frame(s) then writing %s", cl.frames, cl.screenshotPath.c_str());
