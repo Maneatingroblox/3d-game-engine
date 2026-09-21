@@ -7,6 +7,7 @@
 #include <deque>
 #include <string>
 #include <vector>
+#include <fstream>
 #include <cstdio>
 #include <cstdarg>
 
@@ -24,6 +25,37 @@ public:
     static Log& Get() {
         static Log instance;
         return instance;
+    }
+
+    // Duplicates every message into a file. A Windows GUI-subsystem app has no
+    // console attached, so without this the log is invisible - which made a
+    // blank editor window impossible to diagnose from a user's machine.
+    // Call Log::SetFile() (Application does it automatically) and read the file.
+    void SetFile(const std::string& path) {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_FilePath = path;
+        if (m_File.is_open()) m_File.close();
+        if (!path.empty()) {
+            m_File.open(path, std::ios::out | std::ios::trunc);
+            m_File << "---- Forgeworks log ----\n";
+            m_File.flush();
+        }
+    }
+
+    const std::string& FilePath() const { return m_FilePath; }
+
+    // Echoes messages to stdout/stderr as well (useful with --console or when a
+    // debugger is attached). Windows GUI apps have no console by default, in
+    // which case stdio output is simply discarded by the OS.
+    void SetConsoleEcho(bool enabled) { m_ConsoleEcho = enabled; }
+
+    static const char* LevelName(LogLevel level) {
+        switch (level) {
+            case LogLevel::Trace: return "TRACE";
+            case LogLevel::Warn:  return "WARN";
+            case LogLevel::Error: return "ERROR";
+            default:              return "INFO";
+        }
     }
 
     void Write(LogLevel level, const char* fmt, ...) {
@@ -44,7 +76,13 @@ public:
             case LogLevel::Warn:  prefix = "[WARN] "; break;
             case LogLevel::Error: prefix = "[ERROR]"; break;
         }
-        std::fprintf(level == LogLevel::Error ? stderr : stdout, "%s %s\n", prefix, buf);
+        if (m_ConsoleEcho)
+            std::fprintf(level == LogLevel::Error ? stderr : stdout, "%s %s\n", prefix, buf);
+
+        if (m_File.is_open()) {
+            m_File << prefix << ' ' << buf << '\n';
+            m_File.flush(); // flush every line: a crash must not lose the tail
+        }
     }
 
     std::vector<LogEntry> Snapshot() {
@@ -60,6 +98,9 @@ public:
 private:
     std::mutex m_Mutex;
     std::deque<LogEntry> m_Entries;
+    std::ofstream m_File;
+    std::string m_FilePath;
+    bool m_ConsoleEcho = true;
 };
 
 } // namespace fw

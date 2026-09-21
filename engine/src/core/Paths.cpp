@@ -56,10 +56,9 @@ std::string QueryExecutableDir() {
     wchar_t buffer[MAX_PATH * 4];
     DWORD len = GetModuleFileNameW(nullptr, buffer, (DWORD)(MAX_PATH * 4));
     if (len == 0 || len >= MAX_PATH * 4) return {};
-    std::wstring wide(buffer, len);
-    // Narrow without pulling in a full conversion helper (paths here are ASCII).
-    std::string narrow(wide.begin(), wide.end());
-    return fs::path(narrow).parent_path().string();
+    // Let std::filesystem do the wide -> native-narrow conversion (it handles
+    // non-ASCII install paths correctly, unlike a naive iterator copy).
+    return fs::path(std::wstring(buffer, len)).parent_path().string();
 #else
     char buffer[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);

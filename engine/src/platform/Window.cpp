@@ -21,6 +21,13 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     switch (msg) {
+        // Paint the client area with the window class background brush instead
+        // of letting Windows fill it with the default (white) colour: a window
+        // whose first frame hasn't been presented yet should look dark like the
+        // engine's clear colour, not like a broken blank window.
+        case WM_ERASEBKGND:
+            return 1;
+
         case WM_SIZE: {
             if (self) {
                 self->m_Width = LOWORD(lParam);
@@ -51,8 +58,14 @@ bool Window::Create(const WindowDesc& desc) {
     wc.lpfnWndProc = &Window::WndProc;
     wc.hInstance = hInstance;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = CreateSolidBrush(RGB(18, 18, 22)); // engine clear colour
     wc.lpszClassName = kClassName;
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc)) {
+        // Class already registered by a previous instance - fine; otherwise log.
+        DWORD err = GetLastError();
+        if (err != ERROR_CLASS_ALREADY_EXISTS)
+            FW_LOG_WARN("RegisterClassExW failed (error %lu)", err);
+    }
 
     DWORD style = desc.resizable ? WS_OVERLAPPEDWINDOW : (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX);
 
@@ -79,7 +92,16 @@ bool Window::Create(const WindowDesc& desc) {
     else ShowWindow(m_Hwnd, SW_SHOW);
     UpdateWindow(m_Hwnd);
 
-    FW_LOG_INFO("Window created: %s (%dx%d)", desc.title.c_str(), desc.width, desc.height);
+    // Launched from a terminal / shortcut the new window can end up behind it;
+    // bring it to the front so "nothing appeared" can't be a focus problem.
+    SetForegroundWindow(m_Hwnd);
+    SetFocus(m_Hwnd);
+
+    RECT client{};
+    GetClientRect(m_Hwnd, &client);
+    FW_LOG_INFO("Window created: '%s' requested %dx%d, client area %ldx%ld (visible=%d)",
+                desc.title.c_str(), desc.width, desc.height,
+                client.right - client.left, client.bottom - client.top, IsWindowVisible(m_Hwnd) ? 1 : 0);
     return true;
 }
 

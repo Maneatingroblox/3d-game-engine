@@ -13,7 +13,9 @@ struct CommandLine {
     std::string screenshotPath;   // --screenshot <file.png>
     std::string projectRoot;      // --root <dir>
     std::string scenePath;        // --scene <file.fwscene>
+    std::string logPath;          // --log <file.log>
     int frames = 12;              // --frames <n> (let ImGui settle before capture)
+    bool console = false;         // --console: show a console window with the log
     bool help = false;
 };
 
@@ -45,6 +47,8 @@ CommandLine ParseCommandLine() {
         else if (a == "--root") next(cl.projectRoot);
         else if (a == "--scene") next(cl.scenePath);
         else if (a == "--frames") { std::string v; next(v); if (!v.empty()) cl.frames = std::max(1, std::atoi(v.c_str())); }
+        else if (a == "--log") next(cl.logPath);
+        else if (a == "--console") cl.console = true;
         else if (a == "--help" || a == "-h" || a == "/?") cl.help = true;
     }
     return cl;
@@ -60,7 +64,14 @@ void PrintUsage() {
         "  --screenshot <file.png>  Render a few frames, save the whole editor window\n"
         "                           to a PNG and exit (useful for CI / bug reports)\n"
         "  --frames <n>             Frames to render before the screenshot (default 12)\n"
-        "  -h, --help               Show this message\n";
+        "  --console                Attach a console window and echo the log to it\n"
+        "  --log <file.log>         Write the log here (default: <exe dir>\\forgeworks.log)\n"
+        "  -h, --help               Show this message\n"
+        "\n"
+        "The editor always writes a log file next to the executable: if the window\n"
+        "looks empty or the process exits immediately, read that file first - it\n"
+        "records the project root, window/swap chain sizes, shader compilation, the\n"
+        "first-frame report and any D3D11 error.\n";
     MessageBoxA(nullptr, usage, "Forgeworks Map Maker", MB_OK | MB_ICONINFORMATION);
 }
 
@@ -75,6 +86,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     fw::EditorApp app;
     if (!cl.scenePath.empty()) app.SetStartupScene(cl.scenePath);
+    if (!cl.logPath.empty()) app.SetLogFile(cl.logPath);
+    if (cl.console) app.SetConsoleOutput(true);
 
     if (!cl.screenshotPath.empty()) {
         FW_LOG_INFO("Screenshot mode: rendering %d frame(s) then writing %s", cl.frames, cl.screenshotPath.c_str());

@@ -13,7 +13,9 @@ struct CommandLine {
     std::string scenePath;      // --scene <file.fwscene>
     std::string screenshotPath; // --screenshot <file.png>
     std::string projectRoot;    // --root <dir>
+    std::string logPath;        // --log <file.log>
     bool autoplay = false;      // --play (skip the main menu)
+    bool console = false;       // --console
     int frames = 12;
 };
 
@@ -44,6 +46,8 @@ CommandLine ParseCommandLine() {
         else if (a == "--root") next(cl.projectRoot);
         else if (a == "--frames") { std::string v; next(v); if (!v.empty()) cl.frames = std::max(1, std::atoi(v.c_str())); }
         else if (a == "--play") cl.autoplay = true;
+        else if (a == "--log") next(cl.logPath);
+        else if (a == "--console") cl.console = true;
     }
     return cl;
 }
@@ -57,6 +61,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
     fw::GameApp app;
     if (!cl.scenePath.empty()) app.SetStartupScene(cl.scenePath);
+    if (!cl.logPath.empty()) app.SetLogFile(cl.logPath);
+    if (cl.console) app.SetConsoleOutput(true);
     if (cl.autoplay) app.SetStartPlaying(true);
 
     if (!cl.screenshotPath.empty()) {

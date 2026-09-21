@@ -35,6 +35,20 @@ public:
     // subclasses (the editor) can also capture their own off-screen viewport.
     const std::string& ScreenshotPath() const { return m_ScreenshotPath; }
 
+    // ---- startup diagnostics -------------------------------------------------
+    // Where the log is written. Defaults to "<dir of the executable>/forgeworks.log"
+    // because a Windows GUI app has no console: without a log file there is no
+    // way to tell what happened on a user's machine.
+    void SetLogFile(const std::string& path) { m_LogFile = path; }
+    const std::string& LogFile() const { return m_LogFile; }
+    // Allocates a console window and echoes the log to it (--console).
+    void SetConsoleOutput(bool enabled) { m_ConsoleOutput = enabled; }
+    // Number of frames after which a one-line "did anything render?" report is
+    // logged (window size, swap chain, ImGui draw data). 0 disables it.
+    void SetStartupReportFrame(int frame) { m_StartupReportFrame = frame; }
+
+    int FrameIndex() const { return m_FrameIndex; }
+
 protected:
     // Called just before the app exits in RunWithScreenshot() mode, after the
     // window image has been written. Lets a subclass save extra images.
@@ -67,6 +81,13 @@ private:
     std::string m_ScreenshotPath;
     int m_ScreenshotFrames = 0;
     int m_FrameIndex = 0;
+
+    std::string m_LogFile;
+    bool m_ConsoleOutput = false;
+    int m_StartupReportFrame = 5;
+    bool m_StartupReported = false;
+    void OpenLogFileIfNeeded();
+    void LogStartupReport();
 };
 
 } // namespace fw

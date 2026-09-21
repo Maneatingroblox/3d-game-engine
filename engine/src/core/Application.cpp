@@ -30,13 +30,70 @@ bool Application::RunWithScreenshot(const std::string& title, int width, int hei
     return ok;
 }
 
+void Application::OpenLogFileIfNeeded() {
+#if FW_PLATFORM_WINDOWS
+    if (m_ConsoleOutput) {
+        if (AllocConsole()) {
+            FILE* dummy = nullptr;
+            freopen_s(&dummy, "CONOUT$", "w", stdout);
+            freopen_s(&dummy, "CONOUT$", "w", stderr);
+            SetConsoleTitleW(L"Forgeworks log");
+            FW_LOG_INFO("Console attached (--console)");
+        } else {
+            m_ConsoleOutput = false;
+        }
+    }
+#endif
+
+    std::string path = m_LogFile;
+    if (path.empty() && !Paths::ExecutableDir().empty())
+        path = (std::filesystem::path(Paths::ExecutableDir()) / "forgeworks.log").string();
+    if (path.empty()) path = "forgeworks.log";
+
+    Log::Get().SetConsoleEcho(true);
+    Log::Get().SetFile(path);
+    FW_LOG_INFO("Log file: %s", Paths::Resolve(path).c_str());
+}
+
+void Application::LogStartupReport() {
+#if FW_PLATFORM_WINDOWS
+    ImDrawData* drawData = ImGui::GetDrawData();
+    int cmdLists = 0, vertices = 0, indices = 0;
+    if (drawData) {
+        cmdLists = drawData->CmdListsCount;
+        vertices = drawData->TotalVtxCount;
+        indices = drawData->TotalIdxCount;
+    }
+    FW_LOG_INFO("Startup report: frame %d | window %dx%d | swap chain %dx%d | ImGui display %.0fx%.0f | "
+                "draw lists %d (%d verts, %d indices) | renderer %s",
+                m_FrameIndex, m_Window.Width(), m_Window.Height(), m_Device.Width(), m_Device.Height(),
+                ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y,
+                cmdLists, vertices, indices, m_Renderer ? "created" : "MISSING");
+
+    if (cmdLists == 0 || vertices == 0)
+        FW_LOG_ERROR("ImGui produced no draw data - the window will look empty. "
+                     "Check that ImGui was initialized (ImGui_ImplWin32_Init / ImGui_ImplDX11_Init).");
+    if (m_Window.Width() <= 0 || m_Window.Height() <= 0)
+        FW_LOG_ERROR("Window client size is %dx%d - the window is minimized or was created with a bad size.",
+                     m_Window.Width(), m_Window.Height());
+#else
+    FW_LOG_INFO("Startup report: frame %d", m_FrameIndex);
+#endif
+}
+
 bool Application::RunInternal(const std::string& title, int width, int height, bool maximized) {
+    OpenLogFileIfNeeded();
+    FW_LOG_INFO("=== Forgeworks starting: %s (%dx%d, maximized=%d) ===", title.c_str(), width, height, maximized ? 1 : 0);
+
     WindowDesc desc;
     desc.title = title;
     desc.width = width;
     desc.height = height;
     desc.maximized = maximized;
-    if (!m_Window.Create(desc)) return false;
+    if (!m_Window.Create(desc)) {
+        FW_LOG_ERROR("Window creation failed - nothing can be shown.");
+        return false;
+    }
 
     m_Window.OnRawMessage = [](void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam) -> bool {
         return ImGui_ImplWin32_WndProcHandler((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam) != 0;
@@ -48,14 +105,30 @@ bool Application::RunInternal(const std::string& title, int width, int height, b
         OnResize(w, h);
     };
 
-    if (!m_Device.Init(m_Window, true)) return false;
+    if (!m_Device.Init(m_Window, true)) {
+        FW_LOG_ERROR("D3D11 device/swap chain creation failed - the window will stay blank. "
+                     "Update the GPU driver, or run with --screenshot to capture diagnostics.");
+        return false;
+    }
+    // The window may have been resized (maximize) before the device existed;
+    // keep the swap chain in sync with the real client area.
+    if (m_Window.Width() != m_Device.Width() || m_Window.Height() != m_Device.Height()) {
+        FW_LOG_INFO("Syncing swap chain to window size %dx%d", m_Window.Width(), m_Window.Height());
+        m_Device.Resize(m_Window.Width(), m_Window.Height());
+    }
 
     m_Renderer = MakeScope<Renderer>(&m_Device);
-    if (!m_Renderer->Init()) return false;
+    if (!m_Renderer->Init()) {
+        FW_LOG_ERROR("Renderer initialization failed - the window will stay blank.");
+        return false;
+    }
 
     InitImGui();
 
-    if (!OnInit()) return false;
+    if (!OnInit()) {
+        FW_LOG_ERROR("Application::OnInit() returned false - shutting down before the main loop.");
+        return false;
+    }
 
     MainLoop();
 
@@ -181,6 +254,10 @@ void Application::MainLoop() {
         RenderImGui();
 
         m_FrameIndex++;
+        if (!m_StartupReported && m_StartupReportFrame > 0 && m_FrameIndex >= m_StartupReportFrame) {
+            m_StartupReported = true;
+            LogStartupReport();
+        }
         // Screenshot mode: capture the fully drawn window (scene + every ImGui
         // panel) right before presenting, then quit.
         if (!m_ScreenshotPath.empty() && m_FrameIndex >= m_ScreenshotFrames) {
@@ -191,6 +268,8 @@ void Application::MainLoop() {
 
         m_Device.Present();
     }
+
+    FW_LOG_INFO("=== Forgeworks shutting down after %d frame(s) ===", m_FrameIndex);
 }
 
 } // namespace fw

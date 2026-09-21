@@ -32,6 +32,9 @@ public:
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }
     void SetVSync(bool vsync) { m_VSync = vsync; }
+    // True when the GPU device was lost (driver reset/removal) - the app can
+    // then tell the user instead of showing a frozen window.
+    bool DeviceLost() const { return m_DeviceLost; }
 
 #if FW_PLATFORM_WINDOWS
     ID3D11Device* Device() const { return m_Device.Get(); }
@@ -57,6 +60,8 @@ private:
 #endif
     int m_Width = 0, m_Height = 0;
     bool m_VSync = true;
+    bool m_DeviceLost = false;
+    bool m_PresentFailed = false;
 };
 
 } // namespace fw

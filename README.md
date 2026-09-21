@@ -136,6 +136,27 @@ Viewport controls: **RMB drag** looks, **WASD/QE** move (no button needed), **Sh
 **mouse wheel** = fly speed, **F** = frame the selection, **F12** = save a viewport PNG to
 `assets/screenshots/viewport.png`.
 
+### "The editor starts but I see nothing"
+
+The editor always writes a log next to its executable (`build\bin\forgeworks.log`). Read that
+first - it records the resolved project root, the window and swap chain sizes, every shader
+compilation, D3D11 errors, a first-frame report (is ImGui producing draw data?) and the reason
+for any early exit:
+
+```powershell
+build\bin\ForgeworksEditor.exe --console            # live log in a console window
+build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30   # capture the window, then look at it
+Get-Content build\bin\forgeworks.log -Wait          # tail the log while the editor runs
+```
+
+Command line switches (both executables): `--scene`, `--root`, `--log <file>`, `--console`,
+`--screenshot <png>` + `--frames <n>` (editor/game render N frames, save the window, exit),
+`--play` (game: skip the menu), `--help`.
+
+`shots\editor.png.viewport.png` is rendered by the CPU renderer, so even when the GPU path is
+broken it shows what the scene *should* look like - that pair of images separates "the window
+never drew" from "the scene/camera is the problem".
+
 ### If the 3D viewport is ever blank
 
 1. Look at the **Console** panel - a missing/failed HLSL shader, a missing scene file or a
