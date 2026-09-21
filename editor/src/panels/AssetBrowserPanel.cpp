@@ -51,11 +51,7 @@ void EditorApp::DrawAssetBrowserPanel() {
         ImGui::SameLine();
         if (ImGui::Selectable(entry.path.c_str())) {
             if (entry.type == AssetType::Scene) OpenScene(entry.path);
-            if (entry.type == AssetType::Script) {
-                m_OpenScriptPath = entry.path;
-                std::ifstream in(entry.path);
-                m_ScriptEditBuffer.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            }
+            if (entry.type == AssetType::Script) OpenScript(entry.path);
         }
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload("ASSET_PATH", entry.path.c_str(), entry.path.size() + 1);

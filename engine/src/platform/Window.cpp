@@ -1,4 +1,5 @@
 #include "engine/platform/Window.h"
+#include "engine/platform/Input.h"
 #include "engine/core/Log.h"
 #include <algorithm>
 #include <cstring>
@@ -23,6 +24,45 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     switch (msg) {
+        // ---- feed engine/platform/Input -------------------------------------
+        // Always, even when ImGui's Win32 backend also saw the message: the
+        // engine's input state must not depend on UI focus. Button indices:
+        // 0 = left, 1 = right, 2 = middle, 3/4 = X buttons. Mirroring mouse
+        // buttons into the VK_LBUTTON.. slots keeps WasKeyPressed(VK_LBUTTON)
+        // working alongside IsMouseButtonDown.
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+            Input::Get().OnKeyDown((int)wParam);
+            break;
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+            Input::Get().OnKeyUp((int)wParam);
+            break;
+        case WM_MOUSEMOVE: {
+            // Signed (short) coords: the cursor can legitimately be outside
+            // the client area (negative or beyond size) while dragging.
+            const int mx = (int)(short)LOWORD(lParam);
+            const int my = (int)(short)HIWORD(lParam);
+            Input::Get().OnMouseMove(mx, my);
+            break;
+        }
+        case WM_LBUTTONDOWN: Input::Get().OnMouseButton(0, true);  break;
+        case WM_LBUTTONUP:   Input::Get().OnMouseButton(0, false); break;
+        case WM_RBUTTONDOWN: Input::Get().OnMouseButton(1, true);  break;
+        case WM_RBUTTONUP:   Input::Get().OnMouseButton(1, false); break;
+        case WM_MBUTTONDOWN: Input::Get().OnMouseButton(2, true);  break;
+        case WM_MBUTTONUP:   Input::Get().OnMouseButton(2, false); break;
+        case WM_XBUTTONDOWN:
+            Input::Get().OnMouseButton(HIWORD(wParam) == XBUTTON1 ? 3 : 4, true);
+            break;
+        case WM_XBUTTONUP:
+            Input::Get().OnMouseButton(HIWORD(wParam) == XBUTTON1 ? 3 : 4, false);
+            break;
+        case WM_MOUSEWHEEL:
+            // Win32 reports 120 per notch; Input wants wheel notches.
+            Input::Get().OnMouseWheel((float)(short)HIWORD(wParam) / 120.0f);
+            break;
+
         // Paint the client area with the window class background brush instead
         // of letting Windows fill it with the default (white) colour: a window
         // whose first frame hasn't been presented yet should look dark like the
@@ -203,6 +243,40 @@ bool Window::PumpMessages() {
         DispatchMessageW(&msg);
     }
     return true;
+}
+
+void Window::SetCursorLocked(bool locked) {
+    if (m_CursorLocked == locked) return;
+    m_CursorLocked = locked;
+    if (locked) {
+        // Confine the cursor to the client area and hide it while looking.
+        RECT rc;
+        GetClientRect(m_Hwnd, &rc);
+        POINT tl{rc.left, rc.top}, br{rc.right, rc.bottom};
+        ClientToScreen(m_Hwnd, &tl);
+        ClientToScreen(m_Hwnd, &br);
+        const RECT screen{tl.x, tl.y, br.x, br.y};
+        ClipCursor(&screen);
+        ShowCursor(FALSE);
+        CentreCursor();
+    } else {
+        ClipCursor(nullptr);
+        ShowCursor(TRUE);
+    }
+}
+
+void Window::CentreCursor() {
+    if (!m_Hwnd) return;
+    RECT rc;
+    GetClientRect(m_Hwnd, &rc);
+    const int cx = (rc.left + rc.right) / 2;
+    const int cy = (rc.top + rc.bottom) / 2;
+    POINT c{cx, cy};
+    ClientToScreen(m_Hwnd, &c);
+    SetCursorPos(c.x, c.y);
+    // Keep Input's tracked position in sync: the synthetic WM_MOUSEMOVE this
+    // generates must produce a zero delta, not a snap back to the centre.
+    Input::Get().SetMousePositionSilent(vec2((float)cx, (float)cy));
 }
 
 void Window::SetTitle(const std::string& title) {

@@ -71,6 +71,7 @@ struct Options {
     bool viewportPng = true;
     bool game = false;   // --game: render the game runtime instead of the editor
     bool play = false;   // --play: start the scene instead of showing the menu
+    bool hammer = false; // --hammer: Hammer editor mode (quad view + tool strip)
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -86,6 +87,7 @@ Options ParseArgs(int argc, char** argv) {
         else if (a == "--frames") { std::string v; next(v); o.frames = std::atoi(v.c_str()); }
         else if (a == "--no-viewport-png") o.viewportPng = false;
         else if (a == "--game") o.game = true;
+        else if (a == "--hammer") o.hammer = true;
         else if (a == "--play") o.play = true;
     }
     if (o.width < 320) o.width = 320;
@@ -166,6 +168,7 @@ int main(int argc, char** argv) {
     } else {
         editor.SetSoftwareMode(true);
         editor.SetViewportPreviewScale(1.0f);
+        if (opt.hammer) editor.SetEditorMode(fw::EditorMode::Hammer);
         editor.SetStartupReportFrame(0);
     }
     appBase.Canvas().Resize(opt.width, opt.height);

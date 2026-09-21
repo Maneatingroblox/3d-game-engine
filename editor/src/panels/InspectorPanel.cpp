@@ -209,9 +209,7 @@ void EditorApp::DrawInspectorPanel() {
                 m_Engine.GetScriptEngine().AttachScript(entity.Handle(), sc.scriptAsset);
             }
             if (ImGui::SmallButton("Open in Script Editor")) {
-                m_OpenScriptPath = sc.scriptAsset;
-                std::ifstream in(sc.scriptAsset);
-                m_ScriptEditBuffer.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+                OpenScript(sc.scriptAsset.empty() ? "assets/scripts/spin.lua" : sc.scriptAsset);
             }
             ImGui::Checkbox("Enabled", &sc.enabled);
             ImGui::Separator();

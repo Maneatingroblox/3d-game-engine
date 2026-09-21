@@ -51,7 +51,12 @@ struct Transform {
         Transform out;
         vec3 skew; vec4 persp;
         glm::decompose(m, out.scale, out.rotation, out.position, skew, persp);
-        out.rotation = glm::conjugate(out.rotation);
+        // NOTE: glm::decompose already returns the matrix's orientation in the
+        // same convention Transform::ToMatrix builds it (verified by the
+        // transform round-trip test in engine_tests). Conjugating it here used
+        // to invert every rotation read back from a matrix - which is exactly
+        // what the ImGuizmo edit path does, so every gizmo drag mirrored the
+        // object ("the shape's vertices look inverted").
         return out;
     }
 

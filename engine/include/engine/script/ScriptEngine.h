@@ -60,6 +60,13 @@ public:
     void DispatchCollision(entt::entity a, entt::entity b, bool isTrigger, bool isStart);
     void DispatchKeyDown(int key);
     void DispatchKeyUp(int key);
+    // Mouse state mirrored into the Lua `Input` table (fed by
+    // engine/platform/Input when it is bound via Input::BindScriptEngine).
+    void DispatchMouseMove(const vec2& pos, const vec2& delta);
+    void DispatchMouseButton(int button, bool down);
+    void DispatchMouseWheel(float delta);
+    // Clears per-frame edge state (pressed/released/wheel/delta) at frame start.
+    void BeginInputFrame();
 
     // (Re)loads and instantiates the script for a single entity; used by the
     // editor's "Attach Script" and hot-reload-on-save.

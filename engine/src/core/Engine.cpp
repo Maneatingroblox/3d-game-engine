@@ -1,6 +1,7 @@
 #include "engine/core/Engine.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/core/Log.h"
+#include "engine/platform/Input.h"
 
 #if !FORGEWORKS_HEADLESS
 #include "engine/audio/AudioEngine.h"
@@ -27,11 +28,16 @@ void Engine::Init(bool headless) {
     m_ScriptEngine.Init(&m_Scene, &m_PhysicsWorld, nullptr);
 #endif
 
+    // Feed gameplay scripts the same input stream the editor/game read, so
+    // `Input.is_key_down(...)` etc. work inside Lua.
+    Input::Get().BindScriptEngine(&m_ScriptEngine);
+
     FW_LOG_INFO("Engine initialized (headless=%s)", headless ? "true" : "false");
 }
 
 void Engine::Shutdown() {
     Stop();
+    Input::Get().BindScriptEngine(nullptr);
     m_ScriptEngine.Shutdown();
 #if !FORGEWORKS_HEADLESS
     if (m_Audio) m_Audio->Shutdown();

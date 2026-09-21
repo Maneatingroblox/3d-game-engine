@@ -107,6 +107,7 @@ MeshData Brush::ToMeshData() const {
         if (sm.indexCount > 0) mesh.subMeshes.push_back(sm);
     }
     mesh.materialSlotNames = matNames.empty() ? std::vector<std::string>{"default"} : matNames;
+    mesh.EnforceWindingFromNormals();
     mesh.RecalculateTangents();
     mesh.RecalculateBounds();
     return mesh;

@@ -1,9 +1,11 @@
 #pragma once
 // The Map Maker: a Godot-style editor (3D viewport, scene hierarchy,
 // inspector, asset browser, script editor, play/stop) with a toggleable
-// "Hammer mode" for brush-based level geometry authoring. Both modes edit
-// the same underlying Engine/Scene, so scripts and gameplay behave
-// identically whether geometry came from meshes or brushes.
+// "Hammer mode" that switches the whole GUI to a Valve Hammer-style layout -
+// four synchronized viewports (3D camera + top/front/side orthographic views)
+// and brush tools (Block/Clip/Carve/Vertex). Both modes edit the same
+// underlying Engine/Scene, so scripts and gameplay behave identically whether
+// geometry came from meshes or brushes.
 
 #include "engine/core/Application.h"
 #include "engine/core/Engine.h"
@@ -25,6 +27,7 @@ namespace fw {
 
 enum class EditorMode { Scene, Hammer };
 enum class BrushTool { Select, Block, Clip, Vertex, Carve };
+enum class EditorLayout { None, Scene, Hammer };
 
 class EditorApp : public Application {
 public:
@@ -35,6 +38,11 @@ public:
     // The default (0.5) keeps the interactive CPU path responsive; screenshot
     // tools ask for 1.0.
     void SetViewportPreviewScale(float scale) { m_SoftwarePreviewScale = scale; }
+
+    // Scene mode = Godot-style single viewport; Hammer mode = the quad-view
+    // brush editor. Used by tools/fwui to capture both GUIs.
+    void SetEditorMode(EditorMode mode) { m_Mode = mode; m_ActiveLayout = EditorLayout::None; }
+    EditorMode GetEditorMode() const { return m_Mode; }
 
 protected:
     bool OnInit() override;
@@ -65,16 +73,35 @@ private:
     void DrawLightmapBakePanel();
     void DrawEntityNode(entt::entity e);
 
+    // Hammer-mode orthographic views (top/front/side). `view`: 0 = top (X/Z),
+    // 1 = front (X/Y), 2 = side (Z/Y). Drawn as 2D wireframe over a grid,
+    // Hammer-style: pan with MMB drag, zoom with the wheel, LMB drags out
+    // blocks (Block tool) or picks brushes (Select tool).
+    void DrawOrthoViewPanel(const char* title, int view);
+    struct OrthoView {
+        vec2 center{0.0f, 0.0f}; // world-space in-plane centre (u,w coords)
+        float zoom = 40.0f;      // screen pixels per world unit
+    };
+    // Maps a world position into an ortho view's (u, w) plane coordinates.
+    static void OrthoViewAxes(int view, vec3& right, vec3& up);
+    static void OrthoViewPlaneCoords(int view, const vec3& world, float& u, float& w);
+    void OrthoViewWorldPoint(int view, const vec2& mouseScreenPos, const ImVec2& rectPos,
+                             const ImVec2& rectSize, vec3& outWorld) const;
+    void DrawOrthoViewContent(int view, struct ImDrawList* dl, const ImVec2& pos, const ImVec2& size);
+    void HandleOrthoViewInput(int view, const ImVec2& rectPos, const ImVec2& rectSize);
+
     // Viewport camera (edit-time fly camera; separate from any in-scene CameraComponent)
     void UpdateEditorCamera(float dt);
     RenderCamera BuildEditorCamera() const;
     void FrameSelection();          // F: move the camera so the selection is on screen
     void ResetEditorCamera();
 
-    // Default dock layout (built once, on the first frame).
+    // Default dock layouts (built once per mode switch).
     // `dockspaceId` is an ImGuiID (unsigned int) - kept as a plain integer so
     // this header doesn't have to include imgui.h.
     void BuildDefaultLayout(unsigned int dockspaceId);
+    void BuildHammerLayout(unsigned int dockspaceId);
+    void EnsureLayout(unsigned int dockspaceId);
     void DrawViewportOverlay();
 
     // CPU-rendered preview of the viewport (engine/render/SoftwareRenderer.h).
@@ -90,6 +117,12 @@ private:
     void HandleBrushPicking();
     void ApplyClipTool();
     void ApplyCarveTool();
+    void CreateBlockBrush(const vec3& mins, const vec3& maxs);
+
+    // Script editor
+    void OpenScript(const std::string& path);   // loads into the editor buffer
+    bool SaveOpenScript();                      // writes the buffer to disk
+    void NewScriptFile();                       // creates + opens a fresh .lua
 
     void NewScene();
     void OpenScene(const std::string& path);
@@ -99,6 +132,7 @@ private:
     Engine m_Engine;
     AssetDatabase m_AssetDatabase;
     EditorMode m_Mode = EditorMode::Scene;
+    EditorLayout m_ActiveLayout = EditorLayout::None;
     BrushTool m_BrushTool = BrushTool::Select;
 
     entt::entity m_SelectedEntity = entt::null;
@@ -118,6 +152,19 @@ private:
     std::string m_StartupScenePath;
     std::string m_OpenScriptPath;
     std::string m_ScriptEditBuffer;
+    std::string m_ScriptStatus;
+    bool m_ScriptDirty = false;
+
+    // Hammer-mode 2D views + block tool
+    OrthoView m_OrthoViews[3];
+    bool m_BlockDragging = false;
+    int m_BlockDragView = -1;
+    float m_BlockDragU0 = 0.0f, m_BlockDragW0 = 0.0f; // drag start, in-plane
+    float m_BlockDragU1 = 0.0f, m_BlockDragW1 = 0.0f; // current end, in-plane
+    float m_BlockHeight = 2.0f;   // top-view extrusion (Y)
+    float m_BlockBaseY = 0.0f;
+    float m_BlockDepth = 4.0f;    // front/side-view extrusion (Z / X)
+    float m_GridSnap = 1.0f;      // 0 = off
 
     bool m_ShowDemoWindow = false;
     float m_BakeProgress = -1.0f;

@@ -62,6 +62,22 @@ void MeshData::RecalculateTangents() {
     }
 }
 
+void MeshData::EnforceWindingFromNormals() {
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        u32 i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+        if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size()) continue;
+        vec3 e1 = vertices[i1].position - vertices[i0].position;
+        vec3 e2 = vertices[i2].position - vertices[i0].position;
+        vec3 faceN = glm::cross(e1, e2);
+        if (glm::length2(faceN) < 1e-18f) continue; // degenerate: leave alone
+        // Average vertex normal as the "which way is out" reference. If the
+        // winding's geometric normal faces the other way, swap two indices to
+        // flip the triangle (fixes inside-out primitives / invisible faces).
+        const vec3 ref = vertices[i0].normal + vertices[i1].normal + vertices[i2].normal;
+        if (glm::dot(faceN, ref) < 0.0f) std::swap(indices[i + 1], indices[i + 2]);
+    }
+}
+
 void MeshData::GenerateLightmapUVs(int atlasResolution) {
     // A pragmatic (not optimal) lightmap unwrap: classify each triangle by
     // its dominant normal axis, project to 2D, then pack all triangles into
@@ -295,6 +311,7 @@ MeshData MeshData::CreateBox(const vec3& he) {
     SubMesh sm; sm.indexStart = 0; sm.indexCount = (u32)m.indices.size(); sm.materialIndex = 0;
     m.subMeshes.push_back(sm);
     m.materialSlotNames.push_back("default");
+    m.EnforceWindingFromNormals();
     m.RecalculateBounds();
     return m;
 }
@@ -325,9 +342,16 @@ MeshData MeshData::CreateSphere(float radius, int segments) {
         for (int x = 0; x < segments; x++) {
             u32 i0 = y * (segments + 1) + x;
             u32 i1 = i0 + segments + 1;
-            m.indices.insert(m.indices.end(), { i0, i0+1, i1, i0+1, i1+1, i1 });
+            // Skip the degenerate triangles at the poles (the whole ring there
+            // shares one position - the triangles had zero area but produced
+            // garbage normals/winding and shaded artefacts near the caps).
+            const bool northPole = (y == 0);
+            const bool southPole = (y == rings - 1);
+            if (!northPole) m.indices.insert(m.indices.end(), { i0, i0+1, i1 });
+            if (!southPole) m.indices.insert(m.indices.end(), { i0+1, i1+1, i1 });
         }
     }
+    m.EnforceWindingFromNormals();
     SubMesh sm; sm.indexCount = (u32)m.indices.size();
     m.subMeshes.push_back(sm);
     m.materialSlotNames.push_back("default");
@@ -362,6 +386,7 @@ MeshData MeshData::CreatePlane(float sizeX, float sizeZ, int subdivisions) {
     SubMesh sm; sm.indexCount = (u32)m.indices.size();
     m.subMeshes.push_back(sm);
     m.materialSlotNames.push_back("default");
+    m.EnforceWindingFromNormals();
     m.RecalculateBounds();
     return m;
 }
@@ -415,6 +440,7 @@ MeshData MeshData::CreateCylinder(float radius, float height, int segments) {
     SubMesh sm; sm.indexCount = (u32)m.indices.size();
     m.subMeshes.push_back(sm);
     m.materialSlotNames.push_back("default");
+    m.EnforceWindingFromNormals();
     m.RecalculateTangents();
     m.RecalculateBounds();
     return m;
@@ -481,6 +507,7 @@ bool MeshData::CreateBuiltin(const std::string& assetPath, MeshData& out) {
         addFace({ A, E, D });    // left  (-X)
         addFace({ B, C, F });    // right (+X)
 
+        out.EnforceWindingFromNormals();
         out.RecalculateTangents();
         SubMesh sm; sm.indexCount = (u32)out.indices.size();
         out.subMeshes.push_back(sm);

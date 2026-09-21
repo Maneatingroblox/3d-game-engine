@@ -36,6 +36,10 @@ struct MeshData {
     void RecalculateBounds();
     void RecalculateNormals();
     void RecalculateTangents();
+    // Flips any triangle whose winding disagrees with its vertices' normals,
+    // so primitives can never render inside-out (back-face culling hides the
+    // side the normals point away from). Cheap safety net for every builder.
+    void EnforceWindingFromNormals();
 
     // Very simple axis-projection lightmap UV generation (box-projects each
     // triangle onto the dominant axis and packs into an atlas grid). Good

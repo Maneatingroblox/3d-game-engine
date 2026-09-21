@@ -160,6 +160,24 @@ Viewport controls: **RMB drag** looks, **WASD/QE** move (no button needed), **Sh
 **mouse wheel** = fly speed, **F** = frame the selection, **F12** = save a viewport PNG to
 `assets/screenshots/viewport.png`.
 
+**Hammer mode** (toolbar toggle) switches the whole window to the classic quad view: the 3D
+camera top-left, `Ortho Top` (x/z), `Ortho Front` (x/y) and `Ortho Side` (z/y) panes with
+grids, a **Hammer Tools** strip on the left (Selection / Block / Clip / Vertex / Carve) and
+Assets / Console / Script Editor along the bottom. In a 2D pane: **middle-mouse drag** pans,
+**mouse wheel** zooms (anchored at the cursor), and with the **Block** tool **LMB drag** pulls
+out a box brush snapped to the Grid setting (Off / 0.25 / 1 / 4 / 16). A rectangle dragged in
+the top view extrudes *Height* above *Base Y*; one dragged in front/side extrudes *Depth*
+through the plane. **Selection** picks brushes in any view (**DEL** deletes one), **Clip**
+splits the selected brush along a plane, **Carve** subtracts its volume from every other brush.
+Every brush is compiled straight into a mesh + collider entity, so Play mode sees the geometry
+immediately.
+
+The **Script Editor** (bottom dock) edits Lua without leaving the editor: **Open...** lists
+every `.lua` under `assets/`, **New** creates `assets/scripts/new_script*.lua` from a template,
+**Save** (or **Ctrl+S**) writes the buffer and - while playing - hot-reloads the script live.
+All script paths are project-relative, so the editor finds them no matter what directory it
+was launched from.
+
 ### Why the editor could show nothing at all (fixed)
 
 Two independent bugs made the Map Maker open as an empty window, and both are

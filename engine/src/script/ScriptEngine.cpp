@@ -2,6 +2,7 @@
 #include "engine/scene/Scene.h"
 #include "engine/physics/PhysicsWorld.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include <sol/sol.hpp>
 #include <fstream>
 #include <sstream>
@@ -23,7 +24,10 @@ struct ScriptEngine::ScriptInstance {
 };
 
 static std::string ReadFile(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
+    // Script paths are project-relative ("assets/scripts/foo.lua"); resolve
+    // against the project root so they load no matter what the working
+    // directory is (a double-clicked exe starts in an arbitrary directory).
+    std::ifstream f(Paths::Resolve(path), std::ios::binary);
     if (!f) return "";
     std::ostringstream ss;
     ss << f.rdbuf();
@@ -69,7 +73,10 @@ struct InputState {
     std::unordered_map<int, bool> releasedThisFrame;
     vec2 mouseDelta{0.0f};
     vec2 mousePos{0.0f};
+    float wheelDelta = 0.0f;
     bool mouseButtons[8] = {false};
+    bool mousePressed[8] = {false};
+    bool mouseReleased[8] = {false};
 };
 static InputState g_Input;
 
@@ -128,7 +135,10 @@ void ScriptEngine::BindAPI() {
     inputTable.set_function("is_key_released", [](int key) { auto it = g_Input.releasedThisFrame.find(key); return it != g_Input.releasedThisFrame.end() && it->second; });
     inputTable.set_function("mouse_delta", []() { return g_Input.mouseDelta; });
     inputTable.set_function("mouse_position", []() { return g_Input.mousePos; });
+    inputTable.set_function("mouse_wheel", []() { return g_Input.wheelDelta; });
     inputTable.set_function("is_mouse_button_down", [](int btn) { return btn >= 0 && btn < 8 ? g_Input.mouseButtons[btn] : false; });
+    inputTable.set_function("is_mouse_button_pressed", [](int btn) { return btn >= 0 && btn < 8 ? g_Input.mousePressed[btn] : false; });
+    inputTable.set_function("is_mouse_button_released", [](int btn) { return btn >= 0 && btn < 8 ? g_Input.mouseReleased[btn] : false; });
 
     // ---- Entity handle exposed to scripts ----
     lua.new_usertype<Entity>("EntityHandle",
@@ -372,10 +382,39 @@ void ScriptEngine::DispatchKeyUp(int key) {
     }
 }
 
+void ScriptEngine::DispatchMouseMove(const vec2& pos, const vec2& delta) {
+    g_Input.mousePos = pos;
+    g_Input.mouseDelta += delta;
+}
+
+void ScriptEngine::DispatchMouseButton(int button, bool down) {
+    if (button < 0 || button >= 8) return;
+    if (down && !g_Input.mouseButtons[button]) g_Input.mousePressed[button] = true;
+    if (!down && g_Input.mouseButtons[button]) g_Input.mouseReleased[button] = true;
+    g_Input.mouseButtons[button] = down;
+}
+
+void ScriptEngine::DispatchMouseWheel(float delta) {
+    g_Input.wheelDelta += delta;
+}
+
+void ScriptEngine::BeginInputFrame() {
+    g_Input.pressedThisFrame.clear();
+    g_Input.releasedThisFrame.clear();
+    g_Input.mouseDelta = vec2(0.0f);
+    g_Input.wheelDelta = 0.0f;
+    for (bool& p : g_Input.mousePressed) p = false;
+    for (bool& r : g_Input.mouseReleased) r = false;
+}
+
 void ScriptEngine::ReloadScript(const std::string& scriptPath) {
+    // Compare project-resolved forms so "assets/scripts/x.lua" and a resolved
+    // absolute path to the same file reload the same instances.
+    const std::string resolved = Paths::Resolve(scriptPath);
     std::vector<entt::entity> affected;
     for (auto& [id, inst] : m_Instances) {
-        if (inst->scriptPath == scriptPath) affected.push_back(inst->entity);
+        if (inst->scriptPath == scriptPath || Paths::Resolve(inst->scriptPath) == resolved)
+            affected.push_back(inst->entity);
     }
     for (auto e : affected) {
         DetachScript(e);

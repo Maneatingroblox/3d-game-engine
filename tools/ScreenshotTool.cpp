@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
     if (opt.camera == "top" && !opt.havePos) { opt.pos = vec3(0.0f, 24.0f, 0.01f); opt.pitch = -89.5f; opt.yaw = 0.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
     else if (opt.camera == "front" && !opt.havePos) { opt.pos = vec3(0.0f, 3.0f, 16.0f); opt.pitch = -4.0f; opt.yaw = 0.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
     else if (opt.camera == "side" && !opt.havePos) { opt.pos = vec3(16.0f, 3.0f, 0.0f); opt.pitch = -4.0f; opt.yaw = -90.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
-    else if (opt.camera == "persp" && !opt.havePos) { opt.pos = vec3(10.0f, 7.0f, 13.0f); opt.pitch = -18.0f; opt.yaw = -36.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
+    else if (opt.camera == "persp" && !opt.havePos) { opt.pos = vec3(10.0f, 7.0f, 13.0f); opt.pitch = -18.0f; opt.yaw = 36.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
 
     if (!opt.havePos) { opt.pos = vec3(9.0f, 5.5f, 11.0f); opt.havePos = true; }
     if (opt.haveLook) {

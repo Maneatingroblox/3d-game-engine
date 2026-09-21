@@ -509,6 +509,12 @@ void Application::MainLoop() {
     auto lastTime = clock::now();
 
     while (m_Running) {
+        // Start a fresh input frame BEFORE pumping: WndProc records key/mouse
+        // edges and mouse deltas into Input during the pump, and NewFrame()
+        // clears transient state - the old order (NewFrame after PumpMessages)
+        // threw every input event away before OnUpdate could read it, which
+        // is why the fly camera and script Input never saw anything.
+        Input::Get().NewFrame();
         if (!m_Window.PumpMessages()) { m_Running = false; break; }
         if (m_Window.IsMinimized()) continue;
 
@@ -517,9 +523,15 @@ void Application::MainLoop() {
         lastTime = now;
         dt = std::min(dt, 0.1f); // clamp to avoid huge steps after a stall/breakpoint
 
-        Input::Get().NewFrame();
-
         if (!m_FailureScreen) OnUpdate(dt);
+
+        // Cursor lock sync: while a look-drag is active (editor RMB fly, play
+        // mode mouselook) the cursor is clipped to the window and re-centred
+        // so deltas measure motion and the cursor cannot escape mid-drag.
+        if (Input::Get().CursorLocked() != m_Window.CursorLocked()) {
+            m_Window.SetCursorLocked(Input::Get().CursorLocked());
+        }
+        if (Input::Get().CursorLocked()) m_Window.CentreCursor();
 
         const float clearColor[4] = { 0.05f, 0.05f, 0.06f, 1.0f };
         if (m_SoftwareMode) {

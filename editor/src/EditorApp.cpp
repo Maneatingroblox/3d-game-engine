@@ -157,17 +157,25 @@ void EditorApp::UpdateEditorCamera(float dt) {
     // camera is easy to escape.
     if (m_ViewportHovered && std::abs(input.WheelDelta()) > 0.0f) {
         m_CamSpeed = glm::clamp(m_CamSpeed * std::pow(1.15f, input.WheelDelta()), 0.1f, 500.0f);
+        m_SoftwarePreviewDirty = true;
     }
 
-    if (!m_ViewportHovered && !m_ViewportFocused) return;
+    const bool canControl = m_ViewportHovered || m_ViewportFocused;
+    const bool fly = canControl && input.IsMouseButtonDown(1); // RMB: fly camera, Source/Unreal style
+    // While the fly button is down the cursor is locked so dragging cannot
+    // leave the window mid-look (Application keeps it centred every frame).
+    // This runs before any early-out so a stale lock is always released. Play
+    // mode may re-lock afterwards (GameApp) - it runs later in the frame.
+    input.SetCursorLocked(fly);
+    if (!canControl) return;
 
-    const bool fly = input.IsMouseButtonDown(1); // RMB: fly camera, Source/Unreal style
     if (fly) {
         // Dragging right turns the view right; yaw decreases because a
         // positive yaw rotation about +Y turns towards -X.
         const vec2 delta = input.MouseDelta();
         m_CamYaw -= delta.x * 0.15f;
         m_CamPitch = glm::clamp(m_CamPitch - delta.y * 0.15f, -89.0f, 89.0f);
+        if (std::abs(delta.x) > 0.0f || std::abs(delta.y) > 0.0f) m_SoftwarePreviewDirty = true;
     }
 
     vec3 fwd = YawPitchForward(m_CamYaw, m_CamPitch);
@@ -205,7 +213,8 @@ void EditorApp::FrameSelection() {
 }
 
 void EditorApp::OnUpdate(float dt) {
-    Input::Get().SetCursorLocked(false);
+    // (Cursor lock is managed per frame: UpdateEditorCamera locks while flying
+    //  with RMB; GameApp owns the lock while playing.)
 
     if (m_RequestFrameSelection) {
         m_RequestFrameSelection = false;
@@ -511,6 +520,68 @@ void EditorApp::BuildDefaultLayout(unsigned int dockspaceId) {
     FW_LOG_INFO("Dock layout created");
 }
 
+// Rebuilds the dock layout for the current editor mode. Runs on the first
+// frame and whenever the mode (or a broken layout) calls for it. Must be
+// called before ImGui::DockSpace() submits the dockspace node.
+void EditorApp::EnsureLayout(unsigned int dockspaceId) {
+    const EditorLayout wanted =
+        (m_Mode == EditorMode::Hammer) ? EditorLayout::Hammer : EditorLayout::Scene;
+    if (ImGui::DockBuilderGetNode((ImGuiID)dockspaceId) != nullptr && m_ActiveLayout == wanted &&
+        m_DefaultLayoutBuilt) {
+        return;
+    }
+    if (wanted == EditorLayout::Hammer) {
+        BuildHammerLayout(dockspaceId);
+    } else {
+        BuildDefaultLayout(dockspaceId);
+    }
+    m_ActiveLayout = wanted;
+    m_LayoutCheckCountdown = 4;
+}
+
+// Hammer-style quad view: 3D camera top-left of the centre, top / front /
+// side orthographic panes filling the rest of it - the classic Hammer layout -
+// with the Hammer tool strip + Hierarchy / Inspector on the left and Assets /
+// Console / Script Editor along the bottom.
+void EditorApp::BuildHammerLayout(unsigned int dockspaceId) {
+    ImGui::DockBuilderRemoveNode((ImGuiID)dockspaceId);
+    ImGui::DockBuilderAddNode((ImGuiID)dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize((ImGuiID)dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID node = (ImGuiID)dockspaceId;
+    ImGuiID bottom = ImGui::DockBuilderSplitNode(node, ImGuiDir_Down, 0.25f, nullptr, &node);
+    ImGuiID left = ImGui::DockBuilderSplitNode(node, ImGuiDir_Left, 0.17f, nullptr, &node);
+    // Slim toolbar row across the top (same as the Scene layout).
+    ImGuiID toolbarNode = ImGui::DockBuilderSplitNode(node, ImGuiDir_Up, 0.055f, nullptr, &node);
+    if (ImGuiDockNode* bar = ImGui::DockBuilderGetNode(toolbarNode))
+        bar->LocalFlags |= ImGuiDockNodeFlags_NoTabBar; // a bar, not a tab
+
+    // Centre: the quad - 3D | top over front | side.
+    ImGuiID topRow = ImGui::DockBuilderSplitNode(node, ImGuiDir_Up, 0.5f, nullptr, &node);
+    ImGuiID topRight = ImGui::DockBuilderSplitNode(topRow, ImGuiDir_Right, 0.5f, nullptr, &topRow);
+    ImGuiID sideView = ImGui::DockBuilderSplitNode(node, ImGuiDir_Right, 0.5f, nullptr, &node);
+
+    // Left: Hammer tools on top, Hierarchy + Inspector tabbed underneath.
+    ImGuiID leftBottom = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, &left);
+
+    ImGui::DockBuilderDockWindow("Toolbar", toolbarNode);
+    ImGui::DockBuilderDockWindow("Hammer Tools", left);
+    ImGui::DockBuilderDockWindow("Hierarchy", leftBottom);
+    ImGui::DockBuilderDockWindow("Inspector", leftBottom);
+    ImGui::DockBuilderDockWindow("Viewport", topRow);
+    ImGui::DockBuilderDockWindow("Ortho Top", topRight);
+    ImGui::DockBuilderDockWindow("Ortho Front", node);
+    ImGui::DockBuilderDockWindow("Ortho Side", sideView);
+    ImGui::DockBuilderDockWindow("Assets", bottom);
+    ImGui::DockBuilderDockWindow("Console", bottom);
+    ImGui::DockBuilderDockWindow("Script Editor", bottom);
+    ImGui::DockBuilderDockWindow("Lighting", leftBottom);
+
+    ImGui::DockBuilderFinish((ImGuiID)dockspaceId);
+    m_DefaultLayoutBuilt = true;
+    FW_LOG_INFO("Hammer quad layout created");
+}
+
 void EditorApp::OnImGui() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -530,14 +601,11 @@ void EditorApp::OnImGui() {
 
     DrawMenuBar();
 
-    // Build the default layout whenever the dockspace has no node: no saved
-    // layout, a saved layout from another version, or a dock node that was lost
-    // (e.g. after the presentation path was switched and ImGui was recreated).
+    // Rebuild the dock layout whenever it is missing OR the editor mode wants
+    // a different one (Scene = Godot-style single viewport; Hammer = quad
+    // view). This is the only place layouts are created.
     ImGuiID dockspaceId = ImGui::GetID("EditorDockspace");
-    if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
-        BuildDefaultLayout(dockspaceId);
-        m_LayoutCheckCountdown = 4;
-    }
+    EnsureLayout(dockspaceId);
     ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
     ImGui::End();
 
@@ -548,7 +616,12 @@ void EditorApp::OnImGui() {
     DrawAssetBrowserPanel();
     DrawConsolePanel();
     DrawScriptEditorPanel();
-    if (m_Mode == EditorMode::Hammer) DrawHammerToolPanel();
+    if (m_Mode == EditorMode::Hammer) {
+        DrawHammerToolPanel();
+        DrawOrthoViewPanel("Ortho Top", 0);
+        DrawOrthoViewPanel("Ortho Front", 1);
+        DrawOrthoViewPanel("Ortho Side", 2);
+    }
     DrawLightmapBakePanel();
 
     if (m_ShowDemoWindow) ImGui::ShowDemoWindow(&m_ShowDemoWindow);
@@ -570,7 +643,7 @@ void EditorApp::OnImGui() {
             if (!docked || !visible || tabs > 1 || !hostOk) {
                 FW_LOG_WARN("Viewport was not visible (docked=%d tabs=%d visible=%d host=%d) - rebuilding the dock layout",
                             docked ? 1 : 0, tabs, visible ? 1 : 0, hostOk ? 1 : 0);
-                BuildDefaultLayout(ImGui::GetID("EditorDockspace"));
+                m_ActiveLayout = EditorLayout::None; // EnsureLayout() rebuilds it next frame
             }
         }
     }
@@ -651,7 +724,7 @@ void EditorApp::DrawMenuBar() {
             if (ImGui::MenuItem("Reset Camera")) ResetEditorCamera();
             if (ImGui::MenuItem("Frame Selection", "F")) m_RequestFrameSelection = true;
             ImGui::Separator();
-            if (ImGui::MenuItem("Rebuild Layout")) BuildDefaultLayout(ImGui::GetID("EditorDockspace"));
+            if (ImGui::MenuItem("Rebuild Layout")) SetEditorMode(m_Mode); // rebuild the current mode's layout
             ImGui::Separator();
             ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemoWindow);
             ImGui::EndMenu();
@@ -689,7 +762,7 @@ void EditorApp::DrawToolbar() {
     bool hammer = (m_Mode == EditorMode::Hammer);
     ImGui::PushStyleColor(ImGuiCol_Button, hammer ? ImVec4(0.85f, 0.5f, 0.1f, 1.0f) : ImGui::GetStyle().Colors[ImGuiCol_Button]);
     if (ImGui::Button(hammer ? "[ Hammer Mode: ON ]" : "[ Hammer Mode ]")) {
-        m_Mode = hammer ? EditorMode::Scene : EditorMode::Hammer;
+        SetEditorMode(hammer ? EditorMode::Scene : EditorMode::Hammer);
     }
     ImGui::PopStyleColor();
 

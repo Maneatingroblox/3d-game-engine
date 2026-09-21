@@ -271,6 +271,51 @@ static void TestCameraMatrices() {
 }
 
 // ---------------------------------------------------------------------------
+// Transform::FromMatrix must round-trip a TRS matrix. The old implementation
+// conjugated the extracted quaternion (and dropped shear-free scale handling),
+// which made every transform read back from a matrix mirror-rotated - the
+// "vertices look inverted" corruption seen when using ImGuizmo values.
+// Compare rotations by where basis vectors end up (quaternion sign ambiguity
+// makes a raw component compare fragile).
+// ---------------------------------------------------------------------------
+static void TestTransformRoundtrip() {
+    const vec3 positions[] = { vec3(0.0f), vec3(1.5f, -2.0f, 3.25f), vec3(-8.0f, 0.5f, 2.0f) };
+    const vec3 eulers[] = { vec3(0.0f), vec3(10.0f, 35.0f, -20.0f), vec3(-45.0f, 120.0f, 5.0f) };
+    const vec3 scales[] = { vec3(1.0f), vec3(2.0f, 0.5f, 3.0f), vec3(0.25f, 0.25f, 0.25f) };
+
+    for (const vec3& p : positions) {
+        for (const vec3& e : eulers) {
+            for (const vec3& s : scales) {
+                Transform t;
+                t.position = p;
+                t.rotation = glm::quat(glm::radians(e));
+                t.scale = s;
+                const mat4 m = t.ToMatrix();
+
+                const Transform r = Transform::FromMatrix(m);
+                CHECK(glm::length(r.position - t.position) < 1e-3f);
+                CHECK(glm::length(r.scale - t.scale) < 1e-3f);
+
+                // Rotations agree if they move every basis vector the same way.
+                const vec3 probes[] = { vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1) };
+                for (const vec3& probe : probes) {
+                    const vec3 a = t.rotation * probe;
+                    const vec3 b = r.rotation * probe;
+                    CHECK(glm::length(a - b) < 1e-3f);
+                }
+
+                // And the recomposed matrix must match the original.
+                const mat4 m2 = r.ToMatrix();
+                for (int col = 0; col < 4; col++)
+                    for (int row = 0; row < 4; row++)
+                        CHECK(std::abs(m[col][row] - m2[col][row]) < 1e-3f);
+            }
+        }
+    }
+    std::printf("  27 TRS combos round-tripped\n");
+}
+
+// ---------------------------------------------------------------------------
 // Primitive winding: every triangle of every built-in primitive must face
 // outwards, otherwise backface culling makes meshes invisible (this is exactly
 // what happened to builtin:sphere / the cylinder caps before).
@@ -677,6 +722,7 @@ int main() {
     std::printf("== ecs + transforms ==\n");            TestECSAndTransforms();
     std::printf("== scene serialization ==\n");         TestSceneSerialization();
     std::printf("== camera / projection math ==\n");    TestCameraMatrices();
+    std::printf("== transform roundtrip ==\n");        TestTransformRoundtrip();
     std::printf("== primitive winding ==\n");           TestPrimitiveWinding();
     std::printf("== viewport renders something ==\n");  TestViewportIsNotBlank();
     std::printf("== physics ==\n");                     TestPhysicsFreeFall();

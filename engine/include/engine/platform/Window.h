@@ -45,6 +45,14 @@ public:
     void SetFullscreen(bool fullscreen);
     void Resize(int width, int height);
 
+    // ---- cursor lock (fly cameras / look-drag) -----------------------------
+    // While locked the cursor is clipped to the client area and hidden, and
+    // CentreCursor() keeps it in the middle so mouse deltas measure motion
+    // rather than travel to the window edge.
+    void SetCursorLocked(bool locked);
+    bool CursorLocked() const { return m_CursorLocked; }
+    void CentreCursor();
+
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }
     bool IsMinimized() const { return m_Minimized; }
@@ -75,6 +83,7 @@ private:
     bool m_Minimized = false;
     bool m_Maximized = false;
     bool m_Fullscreen = false;
+    bool m_CursorLocked = false;
     HWND m_Hwnd = nullptr;
     WINDOWPLACEMENT m_WindowedPlacement{};
 
@@ -109,6 +118,9 @@ public:
     void SetFullscreen(bool) {}
     void Resize(int width, int height) { m_Width = width; m_Height = height; }
     void BlitSoftwareFrame(const u8*, int, int) {}
+    void SetCursorLocked(bool) {}
+    bool CursorLocked() const { return false; }
+    void CentreCursor() {}
 
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }
