@@ -4,6 +4,8 @@ These images are rendered by the engine itself, not hand-drawn or mocked up.
 
 | File | How it was produced |
 |---|---|
+| `editor_ui.png` | `fwui` - the real editor interface (`EditorApp::OnImGui`) rasterized by the CPU canvas: menu bar, toolbar, dock layout, viewport, hierarchy, inspector, asset browser, console |
+| `editor_ui.viewport.png` | the 3D viewport alone, at full size, from the same run |
 | `viewport_scene_camera.png` | `fwshot assets/scenes/default.fwscene ...` using the scene's `Main Camera` - what the Map Maker's viewport shows on first launch |
 | `viewport_persp.png` | same scene, free perspective camera |
 | `viewport_top.png` | same scene, top-down camera (checks the level from above) |
@@ -26,8 +28,21 @@ cmake --build build-headless -j
 pictures show geometry, lighting, sky and grid exactly as the real camera math produces
 them - without needing a GPU, and reproducibly from a headless build.
 
-For an image of the actual editor UI, run the Windows build with
+For an image of the actual editor window (interface and all) build the headless target and
+run `fwui`, which renders the editor's own UI code with the CPU canvas - no GPU, no window and
+no display needed:
+
+```bash
+./build-headless/bin/fwui --out docs/screenshots/editor_ui.png --frames 10
+# fwui: draw lists 10 | vertices 5558 | indices 9243 | UI coverage 100.0% | distinct colours 205
+```
+
+It also fails (exit code 2) if the interface produces no visible pixels, which is what keeps
+"the editor is blank" from creeping back in.
+
+On Windows the editor can capture its own window, including the GPU path:
 
 ```powershell
 build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30
+# --software forces the CPU presentation path if Direct3D is unavailable
 ```

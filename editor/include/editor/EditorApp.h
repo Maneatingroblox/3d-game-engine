@@ -31,6 +31,11 @@ public:
     // Scene the editor opens on startup (empty = assets/scenes/default.fwscene).
     void SetStartupScene(const std::string& path) { m_StartupScenePath = path; }
 
+    // Resolution fraction used for the CPU viewport preview (1.0 = full size).
+    // The default (0.5) keeps the interactive CPU path responsive; screenshot
+    // tools ask for 1.0.
+    void SetViewportPreviewScale(float scale) { m_SoftwarePreviewScale = scale; }
+
 protected:
     bool OnInit() override;
     void OnUpdate(float dt) override;
@@ -121,6 +126,9 @@ private:
     bool m_SoftwarePreviewDirty = true;
     float m_SoftwarePreviewScale = 0.5f; // fraction of the viewport resolution
     SoftwareImage m_SoftwareImage;
+    // Id of the CPU viewport image inside SoftCanvas (Application::Canvas())
+    // when the app runs on the software presentation path. 0 = not uploaded yet.
+    unsigned int m_SoftPreviewTexId = 0;
     bool m_ShowViewportOverlay = true;
     bool m_DefaultLayoutBuilt = false;
     // One-shot check a few frames after startup that the Viewport really is

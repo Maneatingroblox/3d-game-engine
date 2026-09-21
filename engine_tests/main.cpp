@@ -13,6 +13,8 @@
 #include "engine/lightmap/Lightmapper.h"
 #include "engine/render/RenderTypes.h"
 #include "engine/render/SoftwareRenderer.h"
+#include "engine/render/SoftCanvas.h"
+#include <imgui.h>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
@@ -470,6 +472,66 @@ static void TestBrushCompilePipeline() {
     }
 }
 
+// The editor must never be able to show a blank window. The software
+// presentation path (SoftCanvas + the CPU viewport renderer) is what guarantees
+// that, and it is fully testable on any host: build an ImGui frame, rasterize it
+// and check that real pixels came out.
+static void TestSoftwareCanvasIsNotBlank() {
+    SoftCanvas canvas;
+    canvas.Resize(640, 360);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.DisplaySize = ImVec2(640.0f, 360.0f);
+    io.DeltaTime = 1.0f / 60.0f;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;  // SoftCanvas creates the font atlas
+    io.IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+
+    for (int frame = 0; frame < 3; frame++) {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowSize(ImVec2(600.0f, 320.0f));
+        ImGui::Begin("Forgeworks");
+        ImGui::Text("The editor must draw something here.");
+        ImGui::Button("Play");
+        ImGui::End();
+        ImGui::Render();
+        canvas.Clear(IM_COL32(13, 13, 16, 255));
+        canvas.RenderImGuiFrame();
+    }
+
+    const ImDrawData* dd = ImGui::GetDrawData();
+    CHECK(dd != nullptr);
+    if (dd) {
+        std::printf("  UI draw data: %d list(s), %d verts, %d indices\n",
+                    dd->CmdListsCount, dd->TotalVtxCount, dd->TotalIdxCount);
+        CHECK(dd->CmdListsCount > 0);
+        CHECK(dd->TotalVtxCount > 0);
+    }
+
+    int changed = 0;
+    int distinct[1 << 15] = {0};  // 5 bits per channel; keep in step with the shifts below
+    int distinctCount = 0;
+    const u8* pixels = canvas.Pixels();
+    for (int i = 0; i < canvas.Width() * canvas.Height(); i++) {
+        const u8* px = pixels + (size_t)i * 4;
+        if (px[0] != 13 || px[1] != 13 || px[2] != 16) changed++;
+        const int key = ((px[0] >> 3) << 10) | ((px[1] >> 3) << 5) | (px[2] >> 3);
+        if (!distinct[key]) { distinct[key] = 1; distinctCount++; }
+    }
+    const float coverage = (float)changed / (float)(canvas.Width() * canvas.Height());
+    std::printf("  UI coverage: %.1f%%, distinct colours: %d\n", coverage * 100.0f, distinctCount);
+    CHECK(coverage > 0.05f);
+    CHECK(distinctCount > 8);
+
+    // The font atlas must have arrived through the texture-request contract.
+    CHECK(canvas.HasTexture(1));
+
+    ImGui::DestroyContext();
+}
+
 int main() {
     std::printf("== paths + starter content ==\n");     TestPathsAndStarterContent();
     std::printf("== hammer brush compile ==\n");        TestBrushCompilePipeline();
@@ -482,6 +544,7 @@ int main() {
     std::printf("== scripting ==\n");                   TestScripting();
     std::printf("== brush csg ==\n");                   TestBrushCSG();
     std::printf("== lightmap bake ==\n");               TestLightmapBake();
+    std::printf("== software canvas draws the UI ==\n"); TestSoftwareCanvasIsNotBlank();
 
     if (g_failures == 0) {
         std::printf("\nALL TESTS PASSED\n");

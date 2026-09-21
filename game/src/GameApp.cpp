@@ -4,7 +4,9 @@
 #include "engine/platform/Input.h"
 #include "engine/audio/AudioEngine.h"
 #include "engine/scene/DefaultScene.h"
+#include "engine/render/SoftwareRenderer.h"
 #include <imgui.h>
+#include <cstring>
 #include <filesystem>
 
 namespace fw {
@@ -77,13 +79,8 @@ void GameApp::OnUpdate(float dt) {
     }
 }
 
-void GameApp::OnRender() {
-    // The menu states also render the scene behind the UI (the starter scene is
-    // loaded on startup), so the window is never an empty black rectangle.
-    if (m_Engine.GetScene().Registry().view<IDComponent>().size() == 0) return;
-
+RenderCamera GameApp::MakeSceneCamera(float aspect) {
     RenderCamera rc;
-    const float aspect = (float)m_Device.Width() / std::max(1, m_Device.Height());
     if (Entity cam = m_Engine.GetScene().PrimaryCamera()) {
         auto& tc = cam.Get<TransformComponent>();
         auto& cc = cam.Get<CameraComponent>();
@@ -94,7 +91,10 @@ void GameApp::OnRender() {
         // No camera in the scene: keep a sane default so rendering still works.
         rc = MakeCamera(vec3(9, 6, 12), 36.0f, -20.0f, 60.0f, aspect, 0.05f, 2000.0f);
     }
+    return rc;
+}
 
+RenderSettings GameApp::MakeSceneSettings() {
     RenderSettings settings;
     auto skyView = m_Engine.GetScene().Registry().view<SkyLightComponent>();
     if (!skyView.empty()) {
@@ -102,7 +102,31 @@ void GameApp::OnRender() {
         settings.ambientColor = sky.ambientColor;
         settings.ambientIntensity = sky.ambientIntensity;
     }
-    m_Renderer->RenderScene(m_Engine.GetScene(), rc, settings);
+    return settings;
+}
+
+void GameApp::OnRender() {
+    // The menu states also render the scene behind the UI (the starter scene is
+    // loaded on startup), so the window is never an empty black rectangle.
+    if (m_Engine.GetScene().Registry().view<IDComponent>().size() == 0) return;
+
+    const float aspect = (float)m_Device.Width() / std::max(1, m_Device.Height());
+    m_Renderer->RenderScene(m_Engine.GetScene(), MakeSceneCamera(aspect), MakeSceneSettings());
+}
+
+void GameApp::OnSoftwareRender(SoftCanvas& canvas) {
+    // Same image, no GPU: the CPU reference renderer fills the canvas, and
+    // Application draws the ImGui menus on top of it afterwards.
+    if (canvas.Empty()) return;
+    if (m_Engine.GetScene().Registry().view<IDComponent>().size() == 0) return;
+
+    const int w = canvas.Width(), h = canvas.Height();
+    if (m_SoftwareImage.width != w || m_SoftwareImage.height != h) m_SoftwareImage.Resize(w, h);
+
+    const float aspect = (float)w / (float)std::max(1, h);
+    SoftwareRenderer::RenderScene(m_Engine.GetScene(), MakeSceneCamera(aspect), MakeSceneSettings(),
+                                  m_SoftwareImage, nullptr);
+    std::memcpy(canvas.Pixels(), m_SoftwareImage.Data(), (size_t)w * (size_t)h * 4u);
 }
 
 void GameApp::DrawMainMenu() {

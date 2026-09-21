@@ -11,6 +11,11 @@ frame, exactly like Godot/Unity/Source do.
 
 ## Screenshots
 
+The Map Maker's window, rendered by the editor's own UI code and rasterized by the CPU
+canvas (`fwui`) - no GPU, no display and no hand-drawing involved:
+
+![Map Maker window](docs/screenshots/editor_ui.png)
+
 The editor's viewport renders the default starter scene the moment it opens - camera,
 sun, sky, ground and a few primitives you can immediately grab with the gizmo:
 
@@ -31,13 +36,25 @@ any machine, in CI, or from a headless build:
 ./build-headless/bin/fwshot assets/scenes/default.fwscene wire.png --wireframe --no-grid
 ```
 
-If you want a picture of the *whole editor window* (all ImGui panels included), the
-editor can do that too - this runs on Windows and does not need anyone at the keyboard:
+If you want a picture of the *whole editor window* (all ImGui panels included), there are
+two ways. `fwui` builds the real `EditorApp` interface inside a headless ImGui context and
+rasterizes it - it runs anywhere (that is how `docs/screenshots/editor_ui.png` above was
+produced) and it prints how many draw lists/vertices the interface produced, so a change
+that empties the UI fails loudly instead of shipping:
+
+```bash
+./build-headless/bin/fwui --out docs/screenshots/editor_ui.png --frames 10
+# fwui: draw lists 10 | vertices 5558 | indices 9243 | UI coverage 100.0% | distinct colours 205
+# -> docs/screenshots/editor_ui.png           (full editor window)
+# -> docs/screenshots/editor_ui.viewport.png  (3D viewport only, CPU rendered)
+```
+
+On Windows the editor can screenshot itself without anyone at the keyboard:
 
 ```powershell
 build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30
-# -> shots\editor.png            (full window, GPU rendered)
-# -> shots\editor.png.viewport.png (3D viewport only, CPU rendered)
+# -> shots\editor.png           (the whole window as it is presented)
+# -> shots\editor.viewport.png  (3D viewport only, CPU rendered)
 ```
 
 The game runtime accepts the same switches (`ForgeworksGame.exe --screenshot ... --play`).
@@ -138,22 +155,41 @@ Viewport controls: **RMB drag** looks, **WASD/QE** move (no button needed), **Sh
 
 ### "The editor starts but I see nothing"
 
-The editor always writes a log next to its executable (`build\bin\forgeworks.log`). Read that
-first - it records the resolved project root, the window and swap chain sizes, every shader
-compilation, D3D11 errors, a first-frame report (is ImGui producing draw data?) and the reason
-for any early exit:
+It cannot happen silently any more, and there is a switch that rules the GPU out entirely:
 
 ```powershell
-build\bin\ForgeworksEditor.exe --console            # live log in a console window
+build\bin\ForgeworksEditor.exe --software            # no Direct3D at all: CPU frame + GDI blit
+```
+
+`--software` never creates a D3D11 device, a swap chain or a shader. The whole frame - the
+CPU-rendered 3D viewport *and* the entire ImGui interface - is rasterized by
+`engine/render/SoftCanvas.h` and blitted to the window with a single `BitBlt`. If the GPU
+path is unavailable (broken/old driver, virtual machine, remote desktop, missing GPU) the
+editor now takes that path **automatically** instead of opening an empty window, logs why,
+and puts `[CPU rendering]` in the window title.
+
+If something *does* go wrong, it is reported three ways - none of them a blank window:
+
+1. **In the window**: if start-up fails (`OnInit()` returns false, the device cannot be
+   created, ...) the editor shows a diagnostics screen with the reason, the project root, the
+   log file path and the log tail, plus a Quit button. Use `--software` to get the full
+   interface regardless.
+2. **In a console**: `build\bin\ForgeworksEditor.exe --console` attaches one and echoes the log.
+3. **In a file**: the editor always writes `build\bin\forgeworks.log` (flushed per line, so a
+   crash keeps the tail). It records the resolved project root, window and swap chain sizes,
+   every shader compilation, D3D11/Present errors, the active presentation path and a
+   first-frame report (is ImGui producing draw data?):
+
+```powershell
 build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30   # capture the window, then look at it
 Get-Content build\bin\forgeworks.log -Wait          # tail the log while the editor runs
 ```
 
 Command line switches (both executables): `--scene`, `--root`, `--log <file>`, `--console`,
-`--screenshot <png>` + `--frames <n>` (editor/game render N frames, save the window, exit),
-`--play` (game: skip the menu), `--help`.
+`--software`, `--screenshot <png>` + `--frames <n>` (editor/game render N frames, save the
+window, exit), `--play` (game: skip the menu), `--help`.
 
-`shots\editor.png.viewport.png` is rendered by the CPU renderer, so even when the GPU path is
+`shots\editor.viewport.png` is rendered by the CPU renderer, so even when the GPU path is
 broken it shows what the scene *should* look like - that pair of images separates "the window
 never drew" from "the scene/camera is the problem".
 

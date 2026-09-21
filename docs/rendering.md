@@ -51,6 +51,30 @@ simple (no shadows, no post, no texture sampling, single threaded) and exists to
 * produce screenshots and the "viewport is not blank" regression test
   (`engine_tests`, writes `test_output/viewport.png`).
 
+## CPU presentation path (`SoftCanvas`) - the "never blank" guarantee
+
+The editor has two ways to put a frame on screen, and the second one needs no GPU:
+
+* **GPU** - D3D11 swap chain (`engine/src/render/RenderDevice.cpp`) + `imgui_impl_dx11`.
+* **CPU** - `engine/render/SoftCanvas.h` rasterizes the ImGui draw data (font atlas
+  included, via the renderer-backend texture contract) into an RGBA canvas, and the Win32
+  window blits it with a single `BitBlt` into a DIB section (`Window::BlitSoftwareFrame`).
+  The 3D viewport is CPU-rendered by `engine/render/SoftwareRenderer.h` and shown as an
+  ImGui image, so the whole editor - interface and scene - comes out of the CPU path.
+
+`Application` starts on the GPU path and drops to the CPU path automatically when any of
+these fail: `D3D11CreateDeviceAndSwapChain`, `Renderer::Init()`, `ImGui_ImplDX11_Init` or
+`OnInit()`. `--software` skips D3D11 altogether. A window that cannot show its own content
+(instead: `OnInit()` returned false) shows the reason and the log tail inside the window -
+the same `SoftCanvas` code, so this is exercised by tests, not just by hope.
+
+Regressions are covered by:
+
+* `engine_tests`: `software canvas draws the UI` renders an ImGui frame through `SoftCanvas`
+  and asserts real coverage and colour variety (and that the font atlas arrived).
+* `fwui` (below): renders the *editor's* interface and exits non-zero if it produced no
+  visible pixels.
+
 ## Tools
 
 ```bash
@@ -58,6 +82,9 @@ simple (no shadows, no post, no texture sampling, single threaded) and exists to
 ./build-headless/bin/fwshot assets/scenes/default.fwscene out.png [--camera top|front|side|persp|scene]
                                                                  [--pos x,y,z --look x,y,z]
                                                                  [--wireframe] [--no-grid]
+
+# the real editor interface -> PNG (any host; editor UI code + CPU canvas)
+./build-headless/bin/fwui --out docs/screenshots/editor_ui.png --frames 10
 
 # whole editor window -> PNG (Windows)
 build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30
@@ -82,3 +109,9 @@ directory), so tools work no matter where they are launched from.
    it is blank too, the scene/camera is.
 5. `fwshot scene.fwscene check.png` prints entity/triangle/coverage statistics - a quick
    way to tell "nothing to draw" from "nothing drawn".
+6. `build\bin\ForgeworksEditor.exe --software` rules the GPU out: if the editor is visible
+   with `--software` but not without it, the problem is in the D3D11 path (device, swap
+   chain, shaders, `Present`); `forgeworks.log` records which one.
+7. `fwui --out check.png` renders the interface itself through the CPU canvas and reports
+   draw lists/vertices/coverage - if *that* is empty, the problem is in the UI code, not in
+   the renderer.

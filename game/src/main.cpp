@@ -16,6 +16,7 @@ struct CommandLine {
     std::string logPath;        // --log <file.log>
     bool autoplay = false;      // --play (skip the main menu)
     bool console = false;       // --console
+    bool software = false;      // --software: CPU presentation path (no D3D11)
     int frames = 12;
 };
 
@@ -48,6 +49,7 @@ CommandLine ParseCommandLine() {
         else if (a == "--play") cl.autoplay = true;
         else if (a == "--log") next(cl.logPath);
         else if (a == "--console") cl.console = true;
+        else if (a == "--software") cl.software = true;
     }
     return cl;
 }
@@ -63,6 +65,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (!cl.scenePath.empty()) app.SetStartupScene(cl.scenePath);
     if (!cl.logPath.empty()) app.SetLogFile(cl.logPath);
     if (cl.console) app.SetConsoleOutput(true);
+    if (cl.software) app.SetSoftwareMode(true);
     if (cl.autoplay) app.SetStartPlaying(true);
 
     if (!cl.screenshotPath.empty()) {

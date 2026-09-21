@@ -26,6 +26,15 @@ bool EditorApp::OnInit() {
     // Content paths are project-relative ("assets/..."); make sure they resolve
     // even when the editor is launched from build/bin or a shortcut.
     Paths::Initialize();
+
+    // On the software presentation path (--software, or the automatic fallback
+    // when D3D11 is unavailable) there is no GPU viewport target at all, so the
+    // viewport is always rendered on the CPU.
+    if (SoftwareMode()) {
+        m_SoftwarePreview = true;
+        m_SoftwarePreviewDirty = true;
+        FW_LOG_INFO("Editor is running on the CPU presentation path: the viewport is rendered by the CPU renderer");
+    }
     FW_LOG_INFO("Project root: %s (from %s)", Paths::ProjectRoot().c_str(), Paths::RootSource().c_str());
 
     m_Window.SetTitle("Forgeworks Map Maker");
@@ -289,11 +298,15 @@ void EditorApp::OnScreenshot(const std::string& path) {
     // works even when the GPU path is unavailable) next to the window capture:
     //   shots/editor.png  -> whole window
     //   shots/editor.viewport.png -> 3D viewport only
-    const std::string viewportPath = path + ".viewport.png";
+    const std::filesystem::path shot(path);
+    const std::string viewportPath =
+        (shot.parent_path() / (shot.stem().string() + ".viewport.png")).string();
     CaptureViewportScreenshot(viewportPath);
 }
 
 void EditorApp::OnShutdown() {
+    // The canvas owns its textures; drop the id so a later run re-uploads.
+    m_SoftPreviewTexId = 0;
 #if FW_PLATFORM_WINDOWS
     ReleaseSoftwarePreviewTexture();
 #endif
@@ -368,13 +381,29 @@ void EditorApp::UpdateSoftwarePreview(int width, int height) {
 
     m_SoftwarePreviewDirty = false;
 
+    if (SoftwareMode()) {
+        // Hand the image to the software canvas (it becomes the texture behind
+        // ImGui::Image(); Canvas() honours the same backend contract as the
+        // D3D11 path does with its SRV).
+        if (m_SoftPreviewTexId == 0)
+            m_SoftPreviewTexId = Canvas().CreateTexture(m_SoftwareImage.Data(), m_SoftwareImage.width, m_SoftwareImage.height);
+        else
+            Canvas().UpdateTexture(m_SoftPreviewTexId, m_SoftwareImage.Data(), m_SoftwareImage.width, m_SoftwareImage.height);
+    }
 #if FW_PLATFORM_WINDOWS
-    CreateSoftwarePreviewTexture(m_SoftwareImage);
+    else {
+        CreateSoftwarePreviewTexture(m_SoftwareImage);
+    }
 #endif
 }
 
 void EditorApp::DrawSoftwarePreviewImage(float width, float height) {
     const ImVec2 size(width, height);
+    if (SoftwareMode()) {
+        if (m_SoftPreviewTexId != 0) ImGui::Image((ImTextureID)(intptr_t)m_SoftPreviewTexId, size);
+        else ImGui::TextDisabled("Software preview unavailable");
+        return;
+    }
 #if FW_PLATFORM_WINDOWS
     if (m_PreviewSRV) ImGui::Image((ImTextureID)(intptr_t)m_PreviewSRV.Get(), size);
     else ImGui::TextDisabled("Software preview unavailable");
@@ -443,10 +472,15 @@ void EditorApp::BuildDefaultLayout(unsigned int dockspaceId) {
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
     ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
     ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.5f, nullptr, &bottom);
+    // Slim toolbar row across the top of the working area. It used to float over
+    // the viewport, where it covered the top of the scene and the viewport's
+    // corner overlay text.
+    ImGuiID toolbarNode = ImGui::DockBuilderSplitNode(center, ImGuiDir_Up, 0.055f, nullptr, &center);
+    if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(toolbarNode))
+        node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;  // a bar, not a tab
 
     ImGui::DockBuilderDockWindow("Viewport", center);
-    // The "Toolbar" window is intentionally left floating (DrawToolbar() pins it
-    // to the top of the viewport every frame).
+    ImGui::DockBuilderDockWindow("Toolbar", toolbarNode);
     ImGui::DockBuilderDockWindow("Hierarchy", left);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
@@ -600,13 +634,15 @@ void EditorApp::DrawMenuBar() {
 }
 
 void EditorApp::DrawToolbar() {
-    // A slim floating bar pinned to the top of the viewport area.
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 30.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
-    ImGui::SetNextWindowBgAlpha(0.9f);
+    // A slim toolbar row docked above the viewport (see BuildDefaultLayout()). If
+    // the layout has not been built yet it still works as a floating bar.
+    if (!m_DefaultLayoutBuilt) {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 30.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.9f);
+    }
     ImGui::Begin("Toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
-                                    ImGuiWindowFlags_NoDocking);
+                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
 
     if (m_Engine.State() == EngineRunState::Editing) {
         if (ImGui::Button(" Play ")) m_Engine.Play();
@@ -666,7 +702,10 @@ void EditorApp::DrawToolbar() {
 void EditorApp::DrawViewportOverlay() {
     if (!m_ShowViewportOverlay) return;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    // The overlay is drawn *after* ImGui::Image(), which advances the cursor to
+    // the bottom of the image - using the cursor here put the whole overlay
+    // outside the panel (clipped away). m_ViewportPos is the image's top-left.
+    const ImVec2 origin(m_ViewportPos.x, m_ViewportPos.y);
     const vec2 originV(origin.x, origin.y);
     const vec2 mpos = Input::Get().MousePosition();
     const vec2 local = mpos - m_ViewportPos;
@@ -711,7 +750,10 @@ void EditorApp::DrawViewportPanel() {
     m_ViewportPos = vec2(screenPos.x, screenPos.y);
 
 #if FW_PLATFORM_WINDOWS
-    if (m_SoftwarePreview) {
+    if (m_SoftwarePreview || SoftwareMode()) {
+        // SoftwareMode() can't be turned off: on the CPU presentation path there
+        // is no GPU render target to fall back to.
+        m_SoftwarePreview = true;
         UpdateSoftwarePreview((int)size.x, (int)size.y);
         DrawSoftwarePreviewImage(size.x, size.y);
     } else if (m_ViewportSRV) {

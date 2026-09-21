@@ -39,6 +39,11 @@ endif()
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
+# The editor UI library (fw_editor) is platform independent and is also used by
+# tools/fwui to screenshot the interface on the CPU, so it is built in every
+# configuration; the Windows executable inside it is gated separately.
+add_subdirectory(editor)
+
 # Command line screenshot tool (fwshot): renders a .fwscene to a PNG using the
 # CPU reference renderer, so it works without a GPU / on any platform. This is
 # what produces the images in docs/screenshots/.
@@ -47,9 +52,6 @@ add_subdirectory(tools)
 if(FORGEWORKS_HEADLESS)
     add_subdirectory(engine_tests)
 else()
-    if(FORGEWORKS_BUILD_EDITOR)
-        add_subdirectory(editor)
-    endif()
     if(FORGEWORKS_BUILD_GAME)
         add_subdirectory(game)
     endif()

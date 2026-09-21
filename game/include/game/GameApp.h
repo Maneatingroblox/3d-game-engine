@@ -8,6 +8,8 @@
 #include "engine/core/Application.h"
 #include "engine/core/Engine.h"
 #include "engine/core/Settings.h"
+#include "engine/render/RenderTypes.h"
+#include "engine/render/SoftwareRenderer.h"
 #include <string>
 
 namespace fw {
@@ -24,9 +26,20 @@ protected:
     bool OnInit() override;
     void OnUpdate(float dt) override;
     void OnRender() override;
+    // CPU presentation path (--software / automatic fallback): rasterizes the
+    // scene into the software canvas so the game window keeps showing the world
+    // without Direct3D (the menu UI is drawn on top by Application).
+    void OnSoftwareRender(SoftCanvas& canvas) override;
     void OnImGui() override;
     void OnShutdown() override;
     void OnResize(int width, int height) override;
+
+private:
+    // Camera/settings shared by the GPU and CPU paths.
+    RenderCamera MakeSceneCamera(float aspect);
+    RenderSettings MakeSceneSettings();
+
+    SoftwareImage m_SoftwareImage;
 
 private:
     void DrawMainMenu();
