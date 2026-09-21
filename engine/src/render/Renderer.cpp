@@ -21,7 +21,9 @@ struct FrameConstantsGPU {
     mat4 invViewProj;
     vec3 cameraPos; float time;
     vec3 ambientColor; float ambientIntensity;
-    int lightCount; vec3 pad;
+    int lightCount;
+    float gridCellSize;
+    vec2 pad;
 };
 
 struct ObjectConstantsGPU {
@@ -96,6 +98,15 @@ bool Renderer::Init() {
     dsDesc.DepthFunc = D3D11_COMPARISON_LESS;
     dev->CreateDepthStencilState(&dsDesc, &m_DefaultDepthState);
 
+    // Skybox + ground grid: depth-tested so geometry hides them, but they never
+    // write depth (they must not occlude anything drawn later).
+    D3D11_DEPTH_STENCIL_DESC noWriteDesc{};
+    noWriteDesc.DepthEnable = TRUE;
+    noWriteDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+    noWriteDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+    dev->CreateDepthStencilState(&noWriteDesc, &m_SkyDepthState);
+    dev->CreateDepthStencilState(&noWriteDesc, &m_GridDepthState);
+
     D3D11_BLEND_DESC blendDesc{};
     blendDesc.RenderTarget[0].BlendEnable = FALSE;
     blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
@@ -141,20 +152,38 @@ void Renderer::Shutdown() {}
 
 void Renderer::OnResize(int width, int height) { FW_UNUSED(width); FW_UNUSED(height); }
 
+bool Renderer::MeshShaderAvailable() {
+    return m_ShaderLibrary.HasFailed("assets/shaders/Mesh.hlsl") ? false
+        : m_ShaderLibrary.LoadMeshShader("assets/shaders/Mesh.hlsl") != nullptr;
+}
+
 mat4 Renderer::ComputePrimaryLightViewProj(Scene& scene, const RenderCamera& camera) {
+    // The shadow-casting light travels along its forward axis; the light basis
+    // below maps that onto the direction light travels (same convention as the
+    // GPU light array: `positionOrDir` is a *direction* for directional lights
+    // and shading uses L = -direction).
     vec3 lightDir(0.3f, -1.0f, 0.2f);
     bool found = false;
     scene.Each<TransformComponent, LightComponent>([&](Entity, TransformComponent& tc, LightComponent& lc) {
-        if (found) return;
-        if (lc.type == LightType::Directional) { lightDir = tc.local.Forward(); found = true; }
+        if (found || !lc.castsShadows || lc.type != LightType::Directional) return;
+        lightDir = tc.local.Forward();
+        found = true;
     });
+    if (glm::length2(lightDir) < 1e-8f) lightDir = vec3(0.3f, -1.0f, 0.2f);
     lightDir = glm::normalize(lightDir);
 
-    vec3 focus = camera.position + vec3(0, 0, -10); // simple: center shadow frustum ahead of the camera
-    float orthoSize = 40.0f;
-    vec3 eye = focus - lightDir * 60.0f;
-    mat4 lightView = glm::lookAt(eye, focus, std::abs(lightDir.y) > 0.99f ? vec3(0,0,1) : vec3(0,1,0));
-    mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 200.0f);
+    // Fit the ortho box around the camera frustum so the shadow map is used
+    // efficiently and follows the view instead of being anchored at the world
+    // origin (which made shadows vanish as soon as the camera moved away).
+    const float depth = 45.0f;
+    const float halfHeight = depth * std::tan(Radians(30.0f));  // ~60 deg vertical fov
+    const float halfWidth = halfHeight * 1.9f;                  // generous: covers wide aspects
+    const vec3 focus = camera.position + camera.Forward() * depth;
+    const float radius = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight + depth * depth * 0.25f);
+
+    const vec3 eye = focus - lightDir * (radius * 2.0f);
+    const mat4 lightView = glm::lookAt(eye, focus, std::abs(lightDir.y) > 0.99f ? vec3(0, 0, 1) : vec3(0, 1, 0));
+    const mat4 lightProj = glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.1f, radius * 4.0f);
     return lightProj * lightView;
 }
 
@@ -205,6 +234,7 @@ void Renderer::RenderOpaquePass(Scene& scene, const RenderCamera& camera, const 
     frame.time = 0.0f;
     frame.ambientColor = settings.ambientColor;
     frame.ambientIntensity = settings.ambientIntensity;
+    frame.gridCellSize = settings.drawGrid ? std::max(settings.gridCellSize, 0.0f) : 0.0f;
 
     LightConstantsGPU lightsData{};
     int lightCount = 0;
@@ -290,18 +320,43 @@ void Renderer::RenderSkybox(Scene& scene, const RenderCamera& camera) {
     ctx->VSSetShader(shader->vs.Get(), nullptr, 0);
     ctx->PSSetShader(shader->ps.Get(), nullptr, 0);
 
-    D3D11_DEPTH_STENCIL_DESC dsDesc{};
-    dsDesc.DepthEnable = TRUE;
-    dsDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
-    dsDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-    ComPtr<ID3D11DepthStencilState> skyDepthState;
-    m_Device->Device()->CreateDepthStencilState(&dsDesc, &skyDepthState);
-    ctx->OMSetDepthStencilState(skyDepthState.Get(), 0);
+    ctx->OMSetDepthStencilState(m_SkyDepthState.Get(), 0);
 
     ctx->Draw(3, 0);
 
     ctx->OMSetDepthStencilState(m_DefaultDepthState.Get(), 0);
     FW_UNUSED(scene); FW_UNUSED(camera);
+}
+
+// Ground grid: fullscreen pass drawn after the scene, depth-tested but not
+// depth-writing (see assets/shaders/Grid.hlsl). This is what keeps the
+// viewport readable when a scene contains no geometry yet.
+void Renderer::RenderGrid(const RenderSettings& settings, int width, int height) {
+    if (!settings.drawGrid || settings.gridCellSize <= 0.0f) return;
+
+    ID3D11DeviceContext* ctx = m_Device->Context();
+    ShaderProgram* shader = m_ShaderLibrary.LoadFullscreenShader("assets/shaders/Grid.hlsl");
+    if (!shader) return;
+
+    ctx->IASetInputLayout(nullptr);
+    ctx->IASetVertexBuffers(0, 0, nullptr, nullptr, nullptr);
+    ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ctx->VSSetShader(shader->vs.Get(), nullptr, 0);
+    ctx->PSSetShader(shader->ps.Get(), nullptr, 0);
+
+    D3D11_VIEWPORT vp{ 0, 0, (float)width, (float)height, 0.0f, 1.0f };
+    ctx->RSSetViewports(1, &vp);
+    ctx->RSSetState(m_DefaultRasterizer.Get());
+
+    // Depth test on (so geometry occludes the grid), depth writes off (the
+    // grid never occludes anything drawn later).
+    ctx->OMSetDepthStencilState(m_GridDepthState.Get(), 0);
+
+    ctx->OMSetBlendState(m_TransparentBlendState.Get(), nullptr, 0xFFFFFFFF);
+    ctx->Draw(3, 0);
+
+    ctx->OMSetDepthStencilState(m_DefaultDepthState.Get(), 0);
+    ctx->OMSetBlendState(m_OpaqueBlendState.Get(), nullptr, 0xFFFFFFFF);
 }
 
 void Renderer::RenderScene(Scene& scene, const RenderCamera& camera, const RenderSettings& settings,
@@ -328,6 +383,8 @@ void Renderer::RenderScene(Scene& scene, const RenderCamera& camera, const Rende
 
     RenderSkybox(scene, camera);
     RenderOpaquePass(scene, camera, lightViewProj, settings);
+    // Grid last: visible over the sky/background, hidden behind geometry.
+    RenderGrid(settings, width, height);
 }
 
 } // namespace fw

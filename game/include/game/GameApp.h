@@ -15,6 +15,11 @@ namespace fw {
 enum class GameUIState { MainMenu, Settings, Playing, Paused };
 
 class GameApp : public Application {
+public:
+    void SetStartupScene(const std::string& path) { m_StartupScene = path; }
+    // --play: skip the main menu and start the startup scene immediately.
+    void SetStartPlaying(bool play) { m_AutoPlay = play; }
+
 protected:
     bool OnInit() override;
     void OnUpdate(float dt) override;
@@ -34,6 +39,7 @@ private:
     GameUIState m_UIState = GameUIState::MainMenu;
     GameUIState m_ReturnStateAfterSettings = GameUIState::MainMenu;
     std::string m_StartupScene = "assets/scenes/default.fwscene";
+    bool m_AutoPlay = false;
 };
 
 } // namespace fw

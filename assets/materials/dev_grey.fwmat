@@ -1,0 +1,14 @@
+{
+  "albedoColor": [0.42, 0.43, 0.46, 1.0],
+  "emissiveColor": [0.0, 0.0, 0.0],
+  "emissiveStrength": 1.0,
+  "metallic": 0.0,
+  "roughness": 0.75,
+  "albedoMap": "",
+  "normalMap": "",
+  "metallicRoughnessMap": "",
+  "emissiveMap": "",
+  "doubleSided": false,
+  "transparent": false,
+  "shaderAsset": "assets/shaders/Mesh.hlsl"
+}

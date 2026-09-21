@@ -1,5 +1,6 @@
 #include "engine/render/MaterialSystem.h"
 #include "engine/asset/TextureLoader.h"
+#include "engine/core/Paths.h"
 #include "engine/render/RenderDevice.h"
 #include "engine/core/Log.h"
 #include <nlohmann/json.hpp>
@@ -19,13 +20,16 @@ Material* MaterialSystem::GetDefault() {
     return raw;
 }
 
-Material* MaterialSystem::Load(const std::string& path) {
-    auto it = m_Cache.find(path);
+Material* MaterialSystem::Load(const std::string& rawPath) {
+    auto it = m_Cache.find(rawPath);
     if (it != m_Cache.end()) return it->second.get();
 
+    // Materials are referenced as project-relative paths ("assets/..."), so
+    // resolve them against the project root instead of the working directory.
+    const std::string path = Paths::Resolve(rawPath);
     std::ifstream f(path);
     if (!f) {
-        FW_LOG_WARN("Material not found, using default: %s", path.c_str());
+        FW_LOG_WARN("Material not found, using default: %s", rawPath.c_str());
         return GetDefault();
     }
     json j; f >> j;
@@ -51,7 +55,7 @@ Material* MaterialSystem::Load(const std::string& path) {
     mat->shaderAsset = j.value("shaderAsset", std::string("assets/shaders/Mesh.hlsl"));
 
     Material* raw = mat.get();
-    m_Cache[path] = std::move(mat);
+    m_Cache[rawPath] = std::move(mat);
     return raw;
 }
 

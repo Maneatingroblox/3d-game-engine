@@ -1,5 +1,6 @@
 #include "engine/asset/MeshData.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -8,6 +9,10 @@
 #include <cstring>
 #include <unordered_map>
 #include <cmath>
+#include <algorithm>
+#include <filesystem>
+#include <cctype>
+#include <initializer_list>
 
 namespace fw {
 
@@ -312,11 +317,15 @@ MeshData MeshData::CreateSphere(float radius, int segments) {
             m.vertices.push_back(vert);
         }
     }
+    // Winding: counter-clockwise seen from OUTSIDE, matching the convention
+    // used by RecalculateNormals()/CreateBox(). (i0 = (y,x), i1 = (y+1,x),
+    // i0+1 = (y,x+1), i1+1 = (y+1,x+1); increasing y goes down, increasing x
+    // goes towards +Z at theta = 0, so (i0, i0+1, i1) faces +X i.e. outward.)
     for (int y = 0; y < rings; y++) {
         for (int x = 0; x < segments; x++) {
             u32 i0 = y * (segments + 1) + x;
             u32 i1 = i0 + segments + 1;
-            m.indices.insert(m.indices.end(), { i0, i1, i0+1, i1, i1+1, i0+1 });
+            m.indices.insert(m.indices.end(), { i0, i0+1, i1, i0+1, i1+1, i1 });
         }
     }
     SubMesh sm; sm.indexCount = (u32)m.indices.size();
@@ -393,11 +402,14 @@ MeshData MeshData::CreateCylinder(float radius, float height, int segments) {
         m.vertices.push_back(top);
         m.vertices.push_back(bot);
     }
+    // Caps are wound counter-clockwise as seen from outside as well (the top
+    // cap faces +Y, so its triangles must run clockwise when viewed from
+    // above in the (theta increasing towards +Z) parameterisation).
     for (int i = 0; i < segments; i++) {
         u32 t0 = ringStart + i * 2, t1 = ringStart + (i + 1) * 2;
         u32 b0 = t0 + 1, b1 = t1 + 1;
-        m.indices.insert(m.indices.end(), { topCenter, t0, t1 });
-        m.indices.insert(m.indices.end(), { botCenter, b1, b0 });
+        m.indices.insert(m.indices.end(), { topCenter, t1, t0 });
+        m.indices.insert(m.indices.end(), { botCenter, b0, b1 });
     }
 
     SubMesh sm; sm.indexCount = (u32)m.indices.size();
@@ -406,6 +418,106 @@ MeshData MeshData::CreateCylinder(float radius, float height, int segments) {
     m.RecalculateTangents();
     m.RecalculateBounds();
     return m;
+}
+
+// ---------------------------------------------------------------------------
+// Built-in primitive assets ("builtin:cube", ...).
+//
+// MeshRendererComponent::meshAsset may name one of these instead of a file,
+// which is what lets the editor place geometry (and the starter scene contain
+// something to look at) on a fresh clone where no model files exist yet.
+// ---------------------------------------------------------------------------
+namespace {
+const char* kBuiltinNames[] = { "builtin:cube", "builtin:sphere", "builtin:plane", "builtin:cylinder",
+                                "builtin:ramp", nullptr };
+} // namespace
+
+const char* const* MeshData::BuiltinPrimitiveNames() { return kBuiltinNames; }
+
+bool MeshData::IsBuiltinPrimitive(const std::string& assetPath) {
+    return assetPath.rfind("builtin:", 0) == 0;
+}
+
+bool MeshData::CreateBuiltin(const std::string& assetPath, MeshData& out) {
+    const std::string name = assetPath.rfind("builtin:", 0) == 0 ? assetPath.substr(8) : assetPath;
+    if (name == "cube" || name == "box") {
+        out = CreateBox(vec3(0.5f));
+    } else if (name == "sphere") {
+        out = CreateSphere(0.5f, 32);
+    } else if (name == "plane") {
+        out = CreatePlane(1.0f, 1.0f, 1);
+    } else if (name == "cylinder") {
+        out = CreateCylinder(0.5f, 1.0f, 32);
+    } else if (name == "ramp") {
+        // A wedge - handy for testing slopes / character-controller step-up.
+        // Faces are authored counter-clockwise as seen from outside (same
+        // convention as CreateBox), and each face gets its own vertices so
+        // normals stay flat.
+        out = MeshData();
+        const vec3 A(-0.5f, -0.5f, 0.5f), B(0.5f, -0.5f, 0.5f), C(0.5f, -0.5f, -0.5f), D(-0.5f, -0.5f, -0.5f);
+        const vec3 E(-0.5f, 0.5f, -0.5f), F(0.5f, 0.5f, -0.5f);
+
+        auto addFace = [&out](std::initializer_list<vec3> points) {
+            std::vector<vec3> pts(points);
+            if (pts.size() < 3) return;
+            const vec3 n = glm::normalize(glm::cross(pts[1] - pts[0], pts[2] - pts[0]));
+            const u32 base = (u32)out.vertices.size();
+            for (size_t i = 0; i < pts.size(); i++) {
+                Vertex v;
+                v.position = pts[i];
+                v.normal = n;
+                v.uv0 = vec2((i == 1 || i == 2) ? 1.0f : 0.0f, (i >= 2) ? 1.0f : 0.0f);
+                out.vertices.push_back(v);
+            }
+            // Triangle fan over the polygon (all faces here are convex).
+            for (u32 i = 1; i + 1 < (u32)pts.size(); i++) {
+                out.indices.insert(out.indices.end(), { base, base + i, base + i + 1 });
+            }
+        };
+
+        addFace({ A, D, C, B }); // bottom (-Y)
+        addFace({ A, B, F, E }); // slope (+Y/+Z)
+        addFace({ D, E, F, C }); // back  (-Z)
+        addFace({ A, E, D });    // left  (-X)
+        addFace({ B, C, F });    // right (+X)
+
+        out.RecalculateTangents();
+        SubMesh sm; sm.indexCount = (u32)out.indices.size();
+        out.subMeshes.push_back(sm);
+        out.materialSlotNames.push_back("default");
+        out.RecalculateBounds();
+    } else {
+        FW_LOG_WARN("Unknown built-in primitive: %s", assetPath.c_str());
+        return false;
+    }
+
+    if (out.subMeshes.empty()) {
+        SubMesh sm; sm.indexCount = (u32)out.indices.size();
+        out.subMeshes.push_back(sm);
+    }
+    out.RecalculateBounds();
+    return true;
+}
+
+bool MeshData::LoadAny(const std::string& assetPath, MeshData& out, std::string* outError) {
+    if (assetPath.empty()) {
+        if (outError) *outError = "empty mesh asset path";
+        return false;
+    }
+    if (IsBuiltinPrimitive(assetPath)) return CreateBuiltin(assetPath, out);
+
+    const std::string resolved = Paths::Resolve(assetPath);
+    std::string ext = std::filesystem::path(resolved).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+
+    bool ok = false;
+    if (ext == ".fwmesh") {
+        ok = LoadFWMesh(resolved, out);
+        if (!ok && outError) *outError = "failed to read .fwmesh (file missing or corrupt)";
+    } else {
+        ok = LoadOBJ(resolved, out, outError);
+    }
+    return ok;
 }
 
 } // namespace fw

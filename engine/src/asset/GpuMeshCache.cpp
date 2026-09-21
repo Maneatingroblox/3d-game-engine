@@ -38,16 +38,15 @@ GpuMesh* GpuMeshCache::Load(const std::string& path) {
     auto it = m_Cache.find(path);
     if (it != m_Cache.end()) return it->second.get();
 
+    // MeshData::LoadAny resolves project-relative paths (see core/Paths.h) and
+    // understands the built-in primitives ("builtin:cube", ...), so the editor
+    // can render geometry without any model files on disk.
     MeshData data;
-    bool ok = false;
-    if (path.size() > 7 && path.substr(path.size() - 7) == ".fwmesh") {
-        ok = MeshData::LoadFWMesh(path, data);
-    } else {
-        std::string err;
-        ok = MeshData::LoadOBJ(path, data, &err);
-        if (!ok) FW_LOG_ERROR("Failed to load mesh %s: %s", path.c_str(), err.c_str());
+    std::string err;
+    if (!MeshData::LoadAny(path, data, &err)) {
+        FW_LOG_ERROR("Failed to load mesh '%s': %s", path.c_str(), err.empty() ? "unknown error" : err.c_str());
+        return nullptr;
     }
-    if (!ok) return nullptr;
     return Upload(path, data);
 }
 

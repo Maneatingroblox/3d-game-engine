@@ -39,6 +39,11 @@ endif()
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
+# Command line screenshot tool (fwshot): renders a .fwscene to a PNG using the
+# CPU reference renderer, so it works without a GPU / on any platform. This is
+# what produces the images in docs/screenshots/.
+add_subdirectory(tools)
+
 if(FORGEWORKS_HEADLESS)
     add_subdirectory(engine_tests)
 else()

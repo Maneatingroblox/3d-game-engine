@@ -17,8 +17,18 @@ set(FW_CORE_SOURCES
     src/brush/BrushMap.cpp
     src/lightmap/Lightmapper.cpp
     src/scene/SceneSerializer.cpp
+    src/scene/DefaultScene.cpp
     src/core/Settings.cpp
     src/core/Engine.cpp
+    # Paths: locating the project root so content loads no matter what the
+    # working directory is (see engine/core/Paths.h).
+    src/core/Paths.cpp
+    # Material loading is platform independent (only Bind() is D3D11); the CPU
+    # reference renderer needs it too.
+    src/render/MaterialSystem.cpp
+    # CPU reference renderer: lets the viewport be rendered (and screenshotted)
+    # without a GPU, and backs the "viewport is not blank" regression test.
+    src/render/SoftwareRenderer.cpp
 )
 
 set(FW_CORE_LIBS fw_json fw_glm fw_entt fw_stb fw_tinyobj fw_sol2 fw_jolt)
@@ -29,7 +39,6 @@ if(NOT FORGEWORKS_HEADLESS)
         src/render/RenderDevice.cpp
         src/render/Renderer.cpp
         src/render/ShaderLibrary.cpp
-        src/render/MaterialSystem.cpp
         src/platform/Window.cpp
         src/platform/Input.cpp
         src/asset/TextureLoader.cpp

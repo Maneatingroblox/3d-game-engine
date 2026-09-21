@@ -1,6 +1,8 @@
 // Main forward-lit mesh shader: combines dynamic lights (directional/point/
 // spot with PCF shadow sampling for the primary light) with an optional
 // baked lightmap sampled from UV1, plus a simple Cook-Torrance-ish PBR term.
+//
+// Matrix convention: mul(matrix, vector) everywhere - see Common.hlsli.
 #include "Common.hlsli"
 
 struct VSInput {
@@ -25,15 +27,15 @@ struct VSOutput {
 
 VSOutput VSMain(VSInput input) {
     VSOutput o;
-    float4 worldPos4 = mul(float4(input.position, 1.0), gWorld);
+    float4 worldPos4 = mul(gWorld, float4(input.position, 1.0));
     o.worldPos = worldPos4.xyz;
-    o.clipPos = mul(worldPos4, gViewProj);
-    o.worldNormal = normalize(mul(float4(input.normal, 0.0), gWorldInvTranspose).xyz);
-    o.worldTangent = normalize(mul(float4(input.tangent, 0.0), gWorld).xyz);
+    o.clipPos = mul(gViewProj, worldPos4);
+    o.worldNormal = mul((float3x3)gWorldInvTranspose, input.normal);
+    o.worldTangent = mul((float3x3)gWorld, input.tangent);
     o.uv0 = input.uv0;
     o.uv1 = input.uv1;
     o.color = input.color;
-    o.lightClipPos = mul(worldPos4, gLightViewProj);
+    o.lightClipPos = mul(gLightViewProj, worldPos4);
     return o;
 }
 
@@ -59,18 +61,24 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0 - F0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
+// Shadow map lookup. The depth buffer is Direct3D-convention [0,1] (the
+// projection matrices are RH_ZO), the sampler compares LESS_EQUAL, and the
+// depth texture is written by a depth-only pass, so "ref < stored" == lit.
 float SampleShadow(float4 lightClipPos) {
+    if (lightClipPos.w <= 0.0) return 1.0;
     float3 proj = lightClipPos.xyz / lightClipPos.w;
     float2 uv = proj.xy * 0.5 + 0.5;
     uv.y = 1.0 - uv.y;
     if (uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) return 1.0;
+    if (proj.z < 0.0 || proj.z > 1.0) return 1.0;
+
     float shadow = 0.0;
     float2 texel = 1.0 / 2048.0;
     [unroll]
     for (int x = -1; x <= 1; x++) {
         [unroll]
         for (int y = -1; y <= 1; y++) {
-            shadow += gShadowMap.SampleCmpLevelZero(gShadowSampler, uv + float2(x, y) * texel, proj.z - 0.002);
+            shadow += gShadowMap.SampleCmpLevelZero(gShadowSampler, uv + float2(x, y) * texel, proj.z - 0.0015);
         }
     }
     return shadow / 9.0;
@@ -153,5 +161,5 @@ float4 PSMain(VSOutput input) : SV_TARGET {
     if (gHasEmissiveMap) emissive *= gEmissiveMap.Sample(gLinearSampler, input.uv0).rgb;
 
     float3 color = ambient + Lo + emissive;
-    return float4(color, albedo.a);
+    return float4(FWToDisplay(color), albedo.a);
 }

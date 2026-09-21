@@ -1,6 +1,7 @@
 #include "engine/asset/TextureLoader.h"
 #include "engine/render/RenderDevice.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -49,11 +50,13 @@ GpuTexture* TextureLoader::Load(const std::string& path) {
     auto it = m_Cache.find(path);
     if (it != m_Cache.end()) return it->second.get();
 
+    const std::string resolved = Paths::Resolve(path);
     int w, h, channels;
-    unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    unsigned char* data = stbi_load(resolved.c_str(), &w, &h, &channels, 4);
     if (!data) {
-        FW_LOG_ERROR("Failed to load texture: %s (%s)", path.c_str(), stbi_failure_reason());
-        return nullptr;
+        FW_LOG_WARN("Failed to load texture: %s (%s) - using the dev checker texture",
+                    resolved.c_str(), stbi_failure_reason());
+        return GetErrorTexture();
     }
     GpuTexture* result = UploadRGBA8(path, data, w, h);
     stbi_image_free(data);

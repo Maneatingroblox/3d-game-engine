@@ -1,30 +1,57 @@
 #include "game/GameApp.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include "engine/platform/Input.h"
 #include "engine/audio/AudioEngine.h"
+#include "engine/scene/DefaultScene.h"
 #include <imgui.h>
 #include <filesystem>
 
 namespace fw {
 
 bool GameApp::OnInit() {
+    // Resolve content paths relative to the project root, not the working
+    // directory, so a double-clicked ForgeworksGame.exe still finds assets/.
+    Paths::Initialize();
+    FW_LOG_INFO("Project root: %s (from %s)", Paths::ProjectRoot().c_str(), Paths::RootSource().c_str());
+
     Settings::Get().Load();
     m_Window.SetTitle("Forgeworks");
 
     m_Engine.Init(false);
+
+    // Make sure the startup scene exists (the runtime must never launch into a
+    // blank window just because nothing has been authored yet).
+    DefaultScene::EnsureStarterContent(m_StartupScene);
+    if (!std::filesystem::exists(Paths::Resolve(m_StartupScene))) {
+        m_Engine.NewScene("Default");
+        DefaultScene::Build(m_Engine.GetScene(), &m_Engine.GetBrushMap());
+    }
+
+    if (m_AutoPlay) StartGame(m_StartupScene);
+
     FW_LOG_INFO("Game runtime initialized");
     return true;
 }
 
 void GameApp::StartGame(const std::string& scenePath) {
-    if (!std::filesystem::exists(scenePath)) {
-        FW_LOG_ERROR("Scene not found: %s", scenePath.c_str());
-        return;
-    }
-    if (m_Engine.LoadScene(scenePath)) {
+    const std::string resolved = Paths::Resolve(scenePath);
+    if (!std::filesystem::exists(resolved)) {
+        FW_LOG_WARN("Scene '%s' not found - playing the built-in starter scene instead", resolved.c_str());
+        m_Engine.NewScene("Default");
+        DefaultScene::Build(m_Engine.GetScene(), &m_Engine.GetBrushMap());
         m_Engine.Play();
         m_UIState = GameUIState::Playing;
         Input::Get().SetCursorLocked(true);
+        return;
+    }
+    if (m_Engine.LoadScene(resolved)) {
+        m_Engine.Play();
+        m_UIState = GameUIState::Playing;
+        Input::Get().SetCursorLocked(true);
+        FW_LOG_INFO("Playing scene: %s", resolved.c_str());
+    } else {
+        FW_LOG_ERROR("Failed to load scene: %s", resolved.c_str());
     }
 }
 
@@ -51,22 +78,31 @@ void GameApp::OnUpdate(float dt) {
 }
 
 void GameApp::OnRender() {
-    if (m_UIState == GameUIState::Playing || m_UIState == GameUIState::Paused) {
-        Entity cam = m_Engine.GetScene().PrimaryCamera();
-        RenderCamera rc;
-        if (cam) {
-            auto& tc = cam.Get<TransformComponent>();
-            auto& cc = cam.Get<CameraComponent>();
-            rc.position = vec3(tc.worldMatrix[3]);
-            rc.view = glm::inverse(tc.worldMatrix);
-            float aspect = (float)m_Device.Width() / std::max(1, m_Device.Height());
-            rc.proj = glm::perspective(Radians(cc.fovDeg), aspect, cc.nearClip, cc.farClip);
-        }
-        RenderSettings settings;
-        auto* sky = m_Engine.GetScene().Registry().view<SkyLightComponent>().size() > 0 ? &m_Engine.GetScene().Registry().get<SkyLightComponent>(m_Engine.GetScene().Registry().view<SkyLightComponent>().front()) : nullptr;
-        if (sky) { settings.ambientColor = sky->ambientColor; settings.ambientIntensity = sky->ambientIntensity; }
-        m_Renderer->RenderScene(m_Engine.GetScene(), rc, settings);
+    // The menu states also render the scene behind the UI (the starter scene is
+    // loaded on startup), so the window is never an empty black rectangle.
+    if (m_Engine.GetScene().Registry().view<IDComponent>().size() == 0) return;
+
+    RenderCamera rc;
+    const float aspect = (float)m_Device.Width() / std::max(1, m_Device.Height());
+    if (Entity cam = m_Engine.GetScene().PrimaryCamera()) {
+        auto& tc = cam.Get<TransformComponent>();
+        auto& cc = cam.Get<CameraComponent>();
+        rc.position = vec3(tc.worldMatrix[3]);
+        rc.view = glm::inverse(tc.worldMatrix);
+        rc.proj = MakeProjectionMatrix(cc.fovDeg, aspect, cc.nearClip, cc.farClip);
+    } else {
+        // No camera in the scene: keep a sane default so rendering still works.
+        rc = MakeCamera(vec3(9, 6, 12), 36.0f, -20.0f, 60.0f, aspect, 0.05f, 2000.0f);
     }
+
+    RenderSettings settings;
+    auto skyView = m_Engine.GetScene().Registry().view<SkyLightComponent>();
+    if (!skyView.empty()) {
+        auto& sky = m_Engine.GetScene().Registry().get<SkyLightComponent>(skyView.front());
+        settings.ambientColor = sky.ambientColor;
+        settings.ambientIntensity = sky.ambientIntensity;
+    }
+    m_Renderer->RenderScene(m_Engine.GetScene(), rc, settings);
 }
 
 void GameApp::DrawMainMenu() {

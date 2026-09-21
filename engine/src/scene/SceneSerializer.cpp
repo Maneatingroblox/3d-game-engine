@@ -2,6 +2,7 @@
 #include "engine/scene/Scene.h"
 #include "engine/brush/BrushMap.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <filesystem>
@@ -17,8 +18,9 @@ static vec3 Vec3From(const json& j) { return vec3(j[0].get<float>(), j[1].get<fl
 static vec2 Vec2From(const json& j) { return vec2(j[0].get<float>(), j[1].get<float>()); }
 static quat QuatFrom(const json& j) { return quat(j[3].get<float>(), j[0].get<float>(), j[1].get<float>(), j[2].get<float>()); }
 
-bool SceneSerializer::Save(const Scene& sceneConst, const std::string& path, const BrushMap* brushMap) {
+bool SceneSerializer::Save(const Scene& sceneConst, const std::string& rawPath, const BrushMap* brushMap) {
     Scene& scene = const_cast<Scene&>(sceneConst);
+    const std::string path = Paths::Resolve(rawPath);
     json root;
     root["version"] = 1;
     root["name"] = scene.Name();
@@ -149,7 +151,8 @@ bool SceneSerializer::Save(const Scene& sceneConst, const std::string& path, con
     return true;
 }
 
-bool SceneSerializer::Load(Scene& scene, const std::string& path, BrushMap* brushMap) {
+bool SceneSerializer::Load(Scene& scene, const std::string& rawPath, BrushMap* brushMap) {
+    const std::string path = Paths::Resolve(rawPath);
     std::ifstream f(path);
     if (!f) { FW_LOG_ERROR("Failed to open scene file: %s", path.c_str()); return false; }
     json root; f >> root;

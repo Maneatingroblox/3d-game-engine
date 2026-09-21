@@ -53,6 +53,20 @@ struct MeshData {
     static MeshData CreateSphere(float radius, int segments = 24);
     static MeshData CreatePlane(float sizeX, float sizeZ, int subdivisions = 1);
     static MeshData CreateCylinder(float radius, float height, int segments = 24);
+
+    // ---- built-in primitive assets ---------------------------------------
+    // A MeshRendererComponent can reference a primitive instead of a file
+    // ("builtin:cube", "builtin:sphere", "builtin:plane", "builtin:cylinder").
+    // This means the editor can place geometry, and the default scene can
+    // contain something to look at, without requiring any model files on disk.
+    static bool IsBuiltinPrimitive(const std::string& assetPath);
+    static bool CreateBuiltin(const std::string& assetPath, MeshData& out);
+    static const char* const* BuiltinPrimitiveNames(); // null-terminated list
+
+    // Single entry point used by every backend (D3D11 GpuMeshCache and the
+    // CPU SoftwareRenderer): handles `builtin:` names, .fwmesh binaries and
+    // .obj files, resolving relative paths through engine/core/Paths.
+    static bool LoadAny(const std::string& assetPath, MeshData& out, std::string* outError = nullptr);
 };
 
 } // namespace fw

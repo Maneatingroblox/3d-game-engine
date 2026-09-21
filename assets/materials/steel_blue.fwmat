@@ -1,0 +1,8 @@
+{
+  "albedoColor": [0.28, 0.42, 0.68, 1.0],
+  "emissiveColor": [0.0, 0.0, 0.0],
+  "emissiveStrength": 1.0,
+  "metallic": 0.35,
+  "roughness": 0.35,
+  "shaderAsset": "assets/shaders/Mesh.hlsl"
+}
