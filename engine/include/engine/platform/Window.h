@@ -62,6 +62,18 @@ public:
     void BlitSoftwareFrame(const u8* rgba, int width, int height);
     bool HasSoftwareFrame() const { return m_SoftBitmap != nullptr; }
 
+    // ---- cursor control (used by the editor's Z mouselook) -----------------
+    // Hides or shows the pointer. Reference-counted by Win32, so this tracks
+    // the current state and only calls ShowCursor on an actual change -
+    // otherwise repeated calls drive the internal counter away and the cursor
+    // either never hides or never comes back.
+    void SetCursorVisible(bool visible);
+    // Warps the cursor to a client-area pixel. Used to re-centre the pointer
+    // each frame while mouselook is engaged.
+    void SetCursorClientPos(int x, int y);
+    // Client-area rect in screen coordinates; the centre is the warp target.
+    void GetClientRectScreen(int& outX, int& outY, int& outW, int& outH) const;
+
     // Fired on WM_SIZE with the new client-area size.
     std::function<void(int, int)> OnResize;
     // Fired for every raw Win32 message before default handling, so ImGui's
@@ -75,6 +87,7 @@ private:
     bool m_Minimized = false;
     bool m_Maximized = false;
     bool m_Fullscreen = false;
+    bool m_CursorVisible = true;  // mirrors Win32's ShowCursor refcount
     HWND m_Hwnd = nullptr;
     WINDOWPLACEMENT m_WindowedPlacement{};
 
@@ -109,6 +122,14 @@ public:
     void SetFullscreen(bool) {}
     void Resize(int width, int height) { m_Width = width; m_Height = height; }
     void BlitSoftwareFrame(const u8*, int, int) {}
+
+    // Cursor control is a no-op without a real window, but the editor's
+    // mouselook code calls it unconditionally so it must exist here too.
+    void SetCursorVisible(bool) {}
+    void SetCursorClientPos(int, int) {}
+    void GetClientRectScreen(int& outX, int& outY, int& outW, int& outH) const {
+        outX = 0; outY = 0; outW = m_Width; outH = m_Height;
+    }
 
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }

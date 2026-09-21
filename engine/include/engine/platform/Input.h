@@ -38,10 +38,13 @@
         #define VK_F6       0x75
         #define VK_F7       0x76
         #define VK_F8       0x77
-        #define VK_F9       0x79
+        #define VK_F9       0x78
         #define VK_F10      0x79
         #define VK_F11      0x7A
         #define VK_F12      0x7B
+        // Bracket keys: Hammer's grid-size controls.
+        #define VK_OEM_4    0xDB  // '[' on a US layout
+        #define VK_OEM_6    0xDD  // ']' on a US layout
     #endif
 #endif
 
@@ -80,6 +83,26 @@ public:
     bool WasKeyPressed(int vkCode) const;
     bool WasKeyReleased(int vkCode) const;
     bool IsMouseButtonDown(int button) const;
+    // Set on WM_KILLFOCUS and cleared by whoever handles it. The editor uses
+    // this to drop mouselook when the user alt-tabs away: otherwise the cursor
+    // stays hidden and keeps getting warped back to the viewport centre, which
+    // looks exactly like a hung application.
+    void SetFocusLost() { m_FocusLost = true; }
+    bool ConsumeFocusLost() {
+        const bool was = m_FocusLost;
+        m_FocusLost = false;
+        return was;
+    }
+
+    // Teleports the tracked pointer without generating a delta. Used when the
+    // editor re-centres the cursor during mouselook: the warp is not user
+    // motion, so counting it would make the view snap by the recentre distance
+    // every single frame.
+    void WarpMousePosition(const vec2& pos) {
+        m_MousePos = pos;
+        m_LastMousePos = pos;
+    }
+
     vec2 MousePosition() const { return m_MousePos; }
     // Movement accumulated since NewFrame(). Computed live rather than cached,
     // because NewFrame() runs before this frame's messages are pumped - a value
@@ -103,6 +126,7 @@ private:
     vec2 m_LastMousePos{0.0f};
     float m_WheelDelta = 0.0f;
     bool m_CursorLocked = false;
+    bool m_FocusLost = false;
     bool m_UIWantsKeyboard = false;
     bool m_UIWantsMouse = false;
     ScriptEngine* m_ScriptEngine = nullptr;

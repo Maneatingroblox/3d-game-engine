@@ -238,6 +238,40 @@ void Window::Resize(int width, int height) {
         SWP_NOMOVE | SWP_NOZORDER);
 }
 
+// ---------------------------------------------------------------------------
+// Cursor control (editor mouselook)
+// ---------------------------------------------------------------------------
+void Window::SetCursorVisible(bool visible) {
+    // ShowCursor maintains an internal counter, not a boolean: calling it
+    // repeatedly with the same argument pushes the count further from zero and
+    // the cursor stops responding. Only act on a real transition.
+    if (visible == m_CursorVisible) return;
+    m_CursorVisible = visible;
+    ShowCursor(visible ? TRUE : FALSE);
+}
+
+void Window::SetCursorClientPos(int x, int y) {
+    if (!m_Hwnd) return;
+    POINT p{ (LONG)x, (LONG)y };
+    ClientToScreen(m_Hwnd, &p);
+    SetCursorPos(p.x, p.y);
+}
+
+void Window::GetClientRectScreen(int& outX, int& outY, int& outW, int& outH) const {
+    outX = outY = 0;
+    outW = m_Width;
+    outH = m_Height;
+    if (!m_Hwnd) return;
+    RECT rc{};
+    if (!GetClientRect(m_Hwnd, &rc)) return;
+    POINT topLeft{ rc.left, rc.top };
+    ClientToScreen(m_Hwnd, &topLeft);
+    outX = topLeft.x;
+    outY = topLeft.y;
+    outW = rc.right - rc.left;
+    outH = rc.bottom - rc.top;
+}
+
 } // namespace fw
 
 #endif // FW_PLATFORM_WINDOWS

@@ -438,6 +438,157 @@ static void TestFaceWindingSignConvention() {
 // yaw = atan2(-dx, -dz). Getting the sign backwards aims the camera 180 degrees
 // away from where you meant - which is exactly how fwshot's "side" preset ended
 // up rendering zero triangles and "persp" only three. Pin the round-trip down.
+// Click-to-select in the viewport. The editor could previously only pick
+// brushes, so clicking the cube/sphere/ramp selected nothing and the Hierarchy
+// panel was the only way to choose an object.
+//
+// EditorApp itself is Windows-only, so this exercises the two pieces of maths
+// its picking is built from - the screen-pixel-to-world-ray unprojection and
+// ray/triangle intersection - against the real starter scene. If a click at the
+// centre of the screen doesn't hit the object the camera is pointed at, picking
+// is broken regardless of the UI wiring.
+static void TestViewportPickingMath() {
+    Scene scene;
+    DefaultScene::Build(scene, nullptr);
+    scene.UpdateTransforms();
+
+    const float w = 1280.0f, h = 720.0f;
+    // Unprojects a pixel to a world ray, mirroring EditorApp::ScreenPointToRay.
+    auto rayThrough = [&](const RenderCamera& cam, float px, float py) {
+        const float ndcX = (px / w) * 2.0f - 1.0f;
+        const float ndcY = 1.0f - (py / h) * 2.0f;
+        const mat4 inv = glm::inverse(cam.ViewProj());
+        vec4 n = inv * vec4(ndcX, ndcY, 0.0f, 1.0f);
+        vec4 f = inv * vec4(ndcX, ndcY, 1.0f, 1.0f);
+        n /= n.w; f /= f.w;
+        Ray r;
+        r.origin = vec3(n);
+        r.direction = glm::normalize(vec3(f) - vec3(n));
+        return r;
+    };
+
+    // Closest mesh entity along the ray, exact triangles in local space.
+    auto pick = [&](const Ray& ray, float& outT) {
+        entt::entity best = entt::null;
+        outT = std::numeric_limits<float>::max();
+        scene.Each<TransformComponent, MeshRendererComponent>(
+            [&](Entity e, TransformComponent& tc, MeshRendererComponent& mr) {
+                MeshData mesh;
+                if (!MeshData::LoadAny(mr.meshAsset, mesh)) return;
+                const mat4 world = tc.worldMatrix;
+                const mat4 invWorld = glm::inverse(world);
+                Ray lr;
+                lr.origin = vec3(invWorld * vec4(ray.origin, 1.0f));
+                lr.direction = glm::normalize(vec3(invWorld * vec4(ray.direction, 0.0f)));
+                for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                    const vec3& p0 = mesh.vertices[mesh.indices[i + 0]].position;
+                    const vec3& p1 = mesh.vertices[mesh.indices[i + 1]].position;
+                    const vec3& p2 = mesh.vertices[mesh.indices[i + 2]].position;
+                    float t;
+                    if (!RayTriangleIntersect(lr, p0, p1, p2, t)) continue;
+                    const vec3 hitW = vec3(world * vec4(lr.At(t), 1.0f));
+                    const float tw = glm::dot(hitW - ray.origin, ray.direction);
+                    if (tw >= 0.0f && tw < outT) { outT = tw; best = e.Handle(); }
+                }
+            });
+        return best;
+    };
+
+    // Aim a camera straight at each object and click the centre pixel: the
+    // object under the crosshair must be the one that gets picked.
+    struct Case { const char* name; };
+    const Case cases[] = { {"Box"}, {"Sphere"}, {"Cylinder"}, {"Ramp"} };
+    int verified = 0;
+    for (const Case& c : cases) {
+        entt::entity target = entt::null;
+        vec3 targetPos(0.0f);
+        scene.Each<TransformComponent, MeshRendererComponent>(
+            [&](Entity e, TransformComponent& tc, MeshRendererComponent&) {
+                if (e.Name().rfind(c.name, 0) == 0 && target == entt::null) {
+                    target = e.Handle();
+                    targetPos = vec3(tc.worldMatrix[3]);
+                }
+            });
+        if (target == entt::null) continue;
+
+        // Look at the object from directly outside it, along the axis pointing
+        // away from the scene centre. Approaching from a fixed direction would
+        // put other props in the way (the Sphere sits between the origin and
+        // the Cylinder), and picking the nearer object would then be correct
+        // behaviour rather than a bug.
+        vec3 away = targetPos - vec3(0.0f, targetPos.y, 0.0f);
+        if (glm::length2(away) < 1e-4f) away = vec3(0.0f, 0.0f, 1.0f);  // object on the axis
+        const vec3 eye = targetPos + glm::normalize(away) * 4.0f + vec3(0.0f, 1.2f, 0.0f);
+        RenderCamera cam;
+        cam.position = eye;
+        cam.view = glm::lookAt(eye, targetPos, vec3(0, 1, 0));
+        cam.proj = MakeProjectionMatrix(60.0f, w / h, 0.05f, 2000.0f);
+
+        float t = 0.0f;
+        const entt::entity hit = pick(rayThrough(cam, w * 0.5f, h * 0.5f), t);
+        CHECK(hit == target);
+        CHECK(t > 0.0f);
+        verified++;
+    }
+    std::printf("  centre-screen click selects the aimed-at entity (%d objects)\n", verified);
+    CHECK(verified == 4);
+
+    // A ray pointed at empty sky must select nothing, so clicking the
+    // background deselects instead of grabbing whatever happens to be closest.
+    RenderCamera sky;
+    sky.position = vec3(0.0f, 3.0f, 12.0f);
+    sky.view = glm::lookAt(sky.position, sky.position + vec3(0, 1, 0), vec3(0, 0, -1));
+    sky.proj = MakeProjectionMatrix(60.0f, w / h, 0.05f, 2000.0f);
+    float tSky = 0.0f;
+    CHECK(pick(rayThrough(sky, w * 0.5f, h * 0.5f), tSky) == entt::null);
+
+    // Off-centre pixels must map to different rays, otherwise every click on
+    // the viewport would resolve to the same point.
+    RenderCamera cam;
+    cam.position = vec3(0.0f, 3.0f, 12.0f);
+    cam.view = glm::lookAt(cam.position, vec3(0.0f), vec3(0, 1, 0));
+    cam.proj = MakeProjectionMatrix(60.0f, w / h, 0.05f, 2000.0f);
+    const Ray left = rayThrough(cam, w * 0.25f, h * 0.5f);
+    const Ray right = rayThrough(cam, w * 0.75f, h * 0.5f);
+    CHECK(glm::dot(left.direction, right.direction) < 0.999f);
+    // The left pixel must point to the left of the centre ray.
+    const Ray mid = rayThrough(cam, w * 0.5f, h * 0.5f);
+    CHECK(glm::dot(glm::cross(left.direction, mid.direction), vec3(0, 1, 0)) < 0.0f);
+    std::printf("  screen-to-ray unprojection is directional and empty space picks nothing\n");
+}
+
+// The grid hotkeys step in powers of two and clamp, matching Hammer.
+static void TestGridStepping() {
+    const float kMin = 0.03125f, kMax = 128.0f;
+    auto step = [&](float g, int dir) {
+        if (dir < 0) return std::max(g * 0.5f, kMin);
+        if (dir > 0) return std::min(g * 2.0f, kMax);
+        return g;
+    };
+
+    float g = 1.0f;
+    g = step(g, +1); CHECK(g == 2.0f);
+    g = step(g, +1); CHECK(g == 4.0f);
+    g = step(g, -1); CHECK(g == 2.0f);
+    g = step(g, -1); CHECK(g == 1.0f);
+
+    // Clamps rather than running away in either direction.
+    for (int i = 0; i < 40; i++) g = step(g, -1);
+    CHECK(g == kMin);
+    for (int i = 0; i < 80; i++) g = step(g, +1);
+    CHECK(g == kMax);
+
+    // Every reachable size is a clean power of two, so the grid always lines up
+    // with itself when you zoom between steps.
+    g = kMin;
+    while (g < kMax) {
+        const float l = std::log2(g);
+        CHECK(std::fabs(l - std::round(l)) < 1e-5f);
+        g = step(g, +1);
+    }
+    std::printf("  grid stepping: powers of two from %g to %g, clamped\n", kMin, kMax);
+}
+
 static void TestCameraYawSign() {
     struct Case { const char* name; vec3 pos; };
     const Case cases[] = {
@@ -921,6 +1072,8 @@ int main() {
     std::printf("== primitive winding ==\n");           TestPrimitiveWinding();
     std::printf("== face winding sign convention ==\n"); TestFaceWindingSignConvention();
     std::printf("== camera yaw sign ==\n");              TestCameraYawSign();
+    std::printf("== viewport picking ==\n");            TestViewportPickingMath();
+    std::printf("== grid stepping ==\n");               TestGridStepping();
     std::printf("== input frame ordering ==\n");        TestInputFrameOrdering();
     std::printf("== main loop ordering ==\n");          TestMainLoopPumpsAfterNewFrame();
     std::printf("== viewport renders something ==\n");  TestViewportIsNotBlank();

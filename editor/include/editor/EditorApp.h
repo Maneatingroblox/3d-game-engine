@@ -101,6 +101,24 @@ private:
     void ApplyClipTool();
     void ApplyCarveTool();
 
+    // ---- picking (editor/src/EditorPicking.cpp) ----------------------------
+    // Ray through a viewport pixel, in world space.
+    Ray ScreenPointToRay(const vec2& screenPixel, const vec2& viewportPos,
+                         const vec2& viewportSize, const RenderCamera& cam) const;
+    // Closest entity along a ray: AABB reject, then exact triangles.
+    entt::entity PickEntityAt(const Ray& ray, float* outDistance) const;
+    void HandleViewportPicking();
+    // Selects the entity that owns a brush, so a click in a 2D pane also drives
+    // the Inspector and the gizmo.
+    void SelectEntityForBrush(UUID brushId);
+    static void InvalidatePickCache();
+
+    // Z-lock: Hammer's mouselook toggle for the 3D view. While engaged the
+    // cursor is hidden and re-centred every frame, so the camera turns without
+    // the pointer ever reaching a panel edge.
+    void UpdateCameraLock();
+    void SetCameraLock(bool locked);
+
     void NewScene();
     void OpenScene(const std::string& path);
     void SaveScene();
@@ -121,9 +139,26 @@ private:
         float zoom = 16.0f;  // pixels per world unit
     };
     HammerViewState m_HammerViews[3];
-    // Hammer-style grid snapping for brush creation/editing.
+    // Hammer-style grid snapping for brush creation/editing. The grid size is
+    // shared by the 2D panes and the [ / ] hotkeys, so all four views and the
+    // snapping agree on one value (as in Hammer).
     bool m_BrushSnapEnabled = true;
     float m_BrushGridSize = 1.0f;
+    // Grid size is quantised to powers of two, the way Hammer steps it.
+    static constexpr float kMinGridSize = 0.03125f;  // 1/32
+    static constexpr float kMaxGridSize = 128.0f;
+    void StepGridSize(int direction);   // -1 = '[' smaller, +1 = ']' bigger
+
+    // Z-lock (mouselook) state for the 3D viewport.
+    bool m_CameraLocked = false;
+    vec2 m_LockAnchor{0.0f};       // screen point the cursor is re-centred to
+    bool m_LockAnchorValid = false;
+
+    // A click in the viewport is recorded during the ImGui pass and resolved in
+    // the next OnUpdate(): picking needs the camera/viewport rect that the
+    // frame was actually drawn with.
+    bool m_PendingPick = false;
+    vec2 m_PendingPickPos{0.0f};
     // Hammer mode gets its own dock layout (4 views + tool palette); this
     // tracks which layout is currently built so switching modes rebuilds it.
     EditorMode m_BuiltLayoutMode = EditorMode::Scene;

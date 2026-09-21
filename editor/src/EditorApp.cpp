@@ -150,8 +150,64 @@ RenderCamera EditorApp::BuildEditorCamera() const {
     return MakeCamera(m_CamPos, m_CamYaw, m_CamPitch, 60.0f, aspect, 0.05f, 2000.0f);
 }
 
+// Hammer's Z key: toggle mouselook on the 3D view.
+//
+// While engaged the pointer is hidden and warped back to the centre of the
+// viewport every frame, so the camera can keep turning indefinitely without the
+// cursor ever hitting a screen edge or landing on another panel. Z again (or
+// Escape, or losing focus) releases it and restores the pointer where it was.
+void EditorApp::SetCameraLock(bool locked) {
+    if (locked == m_CameraLocked) return;
+    m_CameraLocked = locked;
+
+    if (locked) {
+        // Remember where the pointer was so it can be put back on release.
+        m_LockAnchor = Input::Get().MousePosition();
+        m_LockAnchorValid = true;
+        m_Window.SetCursorVisible(false);
+        FW_LOG_INFO("Mouselook ON - move to look, WASD/QE to fly, Z or Esc to release");
+    } else {
+        m_Window.SetCursorVisible(true);
+        if (m_LockAnchorValid)
+            m_Window.SetCursorClientPos((int)m_LockAnchor.x, (int)m_LockAnchor.y);
+        m_LockAnchorValid = false;
+        FW_LOG_INFO("Mouselook OFF");
+    }
+}
+
+// Recentres the pointer while locked. Called once per frame *after* the camera
+// has consumed this frame's mouse delta.
+void EditorApp::UpdateCameraLock() {
+    if (!m_CameraLocked) return;
+
+    // Centre of the 3D viewport panel, in client pixels.
+    const int cx = (int)(m_ViewportPos.x + m_ViewportSize.x * 0.5f);
+    const int cy = (int)(m_ViewportPos.y + m_ViewportSize.y * 0.5f);
+    m_Window.SetCursorClientPos(cx, cy);
+    // Tell Input the pointer is there now, otherwise the warp itself registers
+    // as a large mouse delta next frame and the view snaps.
+    Input::Get().WarpMousePosition(vec2((float)cx, (float)cy));
+    m_Window.SetCursorVisible(false);
+}
+
 void EditorApp::UpdateEditorCamera(float dt) {
     Input& input = Input::Get();
+
+    // Alt-tabbing away while locked must give the pointer back, otherwise the
+    // cursor stays hidden over other applications.
+    if (input.ConsumeFocusLost() && m_CameraLocked) SetCameraLock(false);
+
+    // ---- Z: toggle mouselook (Hammer's "camera" grab) ----------------------
+    // Allowed whenever the 3D view is hovered/focused or already locked, and
+    // never while a text field has focus (so typing 'z' in the script editor
+    // doesn't grab the mouse).
+    const bool typing = input.UIWantsKeyboard();
+    if (!typing && input.WasKeyPressed('Z') &&
+        (m_ViewportHovered || m_ViewportFocused || m_CameraLocked)) {
+        SetCameraLock(!m_CameraLocked);
+    }
+    // Escape always releases, matching every other editor's panic key.
+    if (m_CameraLocked && input.WasKeyPressed(VK_ESCAPE)) SetCameraLock(false);
 
     // While the right mouse button is held the camera "captures" the mouse:
     // the drag keeps steering even if the cursor leaves the viewport rect,
@@ -161,20 +217,23 @@ void EditorApp::UpdateEditorCamera(float dt) {
     if (rmbDown && m_ViewportHovered) m_CameraCaptured = true;
     if (!rmbDown) m_CameraCaptured = false;
 
+    // Mouselook counts as "actively flying" for every gate below.
+    const bool steering = m_CameraCaptured || m_CameraLocked;
+
     // Typing in a text field (Script Editor, Inspector) must never drive the
     // camera. A captured drag outranks that: the user is actively flying.
-    const bool uiHasKeyboard = input.UIWantsKeyboard() && !m_CameraCaptured;
-    const bool viewportActive = m_CameraCaptured || m_ViewportHovered || m_ViewportFocused;
+    const bool uiHasKeyboard = input.UIWantsKeyboard() && !steering;
+    const bool viewportActive = steering || m_ViewportHovered || m_ViewportFocused;
 
     // Mouse wheel adjusts the fly speed (Hammer/Unreal style), so a "stuck"
     // camera is easy to escape.
-    if ((m_ViewportHovered || m_CameraCaptured) && std::abs(input.WheelDelta()) > 0.0f) {
+    if ((m_ViewportHovered || steering) && std::abs(input.WheelDelta()) > 0.0f) {
         m_CamSpeed = glm::clamp(m_CamSpeed * std::pow(1.15f, input.WheelDelta()), 0.1f, 500.0f);
     }
 
     if (!viewportActive) return;
 
-    if (m_CameraCaptured) {
+    if (steering) {
         // Dragging right turns the view right; yaw decreases because a
         // positive yaw rotation about +Y turns towards -X.
         const vec2 delta = input.MouseDelta();
@@ -206,8 +265,9 @@ void EditorApp::UpdateEditorCamera(float dt) {
         m_SoftwarePreviewDirty = true;
     }
 
-    // Middle-mouse pans, Hammer/Maya style.
-    if (input.IsMouseButtonDown(2) && (m_ViewportHovered || m_CameraCaptured)) {
+    // Middle-mouse pans, Hammer/Maya style. Suppressed while locked: the
+    // pointer is being warped every frame, so a drag has no meaning.
+    if (input.IsMouseButtonDown(2) && !m_CameraLocked && (m_ViewportHovered || m_CameraCaptured)) {
         const vec2 delta = input.MouseDelta();
         if (glm::length2(delta) > 0.0f) {
             const float panScale = m_CamSpeed * 0.0025f;
@@ -217,6 +277,21 @@ void EditorApp::UpdateEditorCamera(float dt) {
     }
 
     if (!uiHasKeyboard && input.WasKeyPressed('F')) m_RequestFrameSelection = true;
+
+    // Re-centre the pointer for the next frame, after the delta above was used.
+    UpdateCameraLock();
+}
+
+// Hammer's [ and ] step the grid down/up in powers of two. Shared by every
+// view, so the 2D panes, the snapping and the toolbar field stay in agreement.
+void EditorApp::StepGridSize(int direction) {
+    const float previous = m_BrushGridSize;
+    if (direction < 0) m_BrushGridSize = std::max(m_BrushGridSize * 0.5f, kMinGridSize);
+    else if (direction > 0) m_BrushGridSize = std::min(m_BrushGridSize * 2.0f, kMaxGridSize);
+    if (m_BrushGridSize != previous) {
+        FW_LOG_INFO("Grid size: %g", m_BrushGridSize);
+        m_SoftwarePreviewDirty = true;
+    }
 }
 
 void EditorApp::FrameSelection() {
@@ -231,7 +306,23 @@ void EditorApp::FrameSelection() {
 }
 
 void EditorApp::OnUpdate(float dt) {
-    Input::Get().SetCursorLocked(false);
+    Input& input = Input::Get();
+    Input::Get().SetCursorLocked(m_CameraLocked);
+
+    // ---- global editor hotkeys ---------------------------------------------
+    // [ and ] resize the grid, exactly as in Hammer. Ignored while a text field
+    // has focus so they can still be typed into the script editor.
+    if (!input.UIWantsKeyboard()) {
+        if (input.WasKeyPressed(VK_OEM_4)) StepGridSize(-1);  // '['
+        if (input.WasKeyPressed(VK_OEM_6)) StepGridSize(+1);  // ']'
+    }
+
+    // A viewport click recorded during last frame's ImGui pass: resolve it now,
+    // against the camera and viewport rect that frame was drawn with.
+    if (m_PendingPick) {
+        m_PendingPick = false;
+        HandleViewportPicking();
+    }
 
     if (m_RequestFrameSelection) {
         m_RequestFrameSelection = false;
@@ -827,6 +918,23 @@ void EditorApp::DrawViewportOverlay() {
                       IM_COL32(0, 0, 0, 140));
     dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 3.0f), IM_COL32(220, 220, 220, 255), line);
 
+    // Mouselook is a modal state with a hidden cursor - say so loudly, and say
+    // how to get out, so it can never feel like the editor has frozen.
+    if (m_CameraLocked) {
+        const char* msg = "MOUSELOOK - Z or Esc to release";
+        const ImVec2 sz = ImGui::CalcTextSize(msg);
+        const float cx = origin.x + m_ViewportSize.x * 0.5f;
+        dl->AddRectFilled(ImVec2(cx - sz.x * 0.5f - 8.0f, origin.y + 24.0f),
+                          ImVec2(cx + sz.x * 0.5f + 8.0f, origin.y + 46.0f),
+                          IM_COL32(180, 90, 0, 200), 3.0f);
+        dl->AddText(ImVec2(cx - sz.x * 0.5f, origin.y + 27.0f), IM_COL32(255, 255, 255, 255), msg);
+
+        // Crosshair at the centre, where the camera is actually aiming.
+        const float cy = origin.y + m_ViewportSize.y * 0.5f;
+        dl->AddLine(ImVec2(cx - 8.0f, cy), ImVec2(cx + 8.0f, cy), IM_COL32(255, 255, 255, 180));
+        dl->AddLine(ImVec2(cx, cy - 8.0f), ImVec2(cx, cy + 8.0f), IM_COL32(255, 255, 255, 180));
+    }
+
     if (m_SoftwarePreview) {
         std::snprintf(line, sizeof(line), "CPU render %.1f ms - press Screenshot (or F12) to save a PNG", m_LastSoftwareMs);
         dl->AddText(ImVec2(origin.x + 6.0f, origin.y + 22.0f), IM_COL32(180, 220, 180, 255), line);
@@ -911,6 +1019,19 @@ void EditorApp::DrawViewportPanel() {
                 m_SoftwarePreviewDirty = true;
             }
         }
+    }
+
+    // ---- click to select ---------------------------------------------------
+    // Recorded here (where the viewport rect and hover state are known) and
+    // resolved in the next OnUpdate(). Skipped when the gizmo is under the
+    // cursor or being dragged, so moving an object never reselects whatever is
+    // behind it, and while mouselook owns the pointer.
+    const bool gizmoBusy = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+    if (m_ViewportHovered && !m_CameraLocked && !gizmoBusy &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        m_PendingPickPos = vec2(mp.x, mp.y);
+        m_PendingPick = true;
     }
 
     DrawViewportOverlay();

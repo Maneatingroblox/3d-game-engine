@@ -129,6 +129,10 @@ void Application::SetupWindowCallbacks() {
             // classic "camera flies away on its own after alt-tab").
             case WM_KILLFOCUS:
                 input.ResetState();
+                // Also flag it, so modal pointer states (the editor's Z
+                // mouselook) can release instead of leaving the cursor hidden
+                // and warped while the user is in another application.
+                input.SetFocusLost();
                 break;
             default:
                 break;

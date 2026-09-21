@@ -3,6 +3,7 @@
 # interface to a PNG on the CPU - no GPU, no window, any platform.
 add_library(fw_editor STATIC
     src/EditorApp.cpp
+    src/EditorPicking.cpp
     src/panels/InspectorPanel.cpp
     src/panels/AssetBrowserPanel.cpp
     src/panels/ConsolePanel.cpp

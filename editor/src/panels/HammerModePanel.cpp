@@ -156,12 +156,20 @@ void EditorApp::DrawHammerToolPanel() {
     ImGui::TextDisabled("Grid");
     ImGui::Checkbox("Snap to grid", &m_BrushSnapEnabled);
     ImGui::SetNextItemWidth(-1);
-    ImGui::DragFloat("##gridsize", &m_BrushGridSize, 0.05f, 0.03125f, 128.0f, "grid %.3f");
-    if (ImGui::SmallButton("/2")) m_BrushGridSize = std::max(m_BrushGridSize * 0.5f, 0.03125f);
+    ImGui::DragFloat("##gridsize", &m_BrushGridSize, 0.05f, kMinGridSize, kMaxGridSize, "grid %.3f");
+    if (ImGui::SmallButton("[ smaller")) StepGridSize(-1);
     ImGui::SameLine();
-    if (ImGui::SmallButton("x2")) m_BrushGridSize = std::min(m_BrushGridSize * 2.0f, 128.0f);
+    if (ImGui::SmallButton("bigger ]")) StepGridSize(+1);
     ImGui::SameLine();
-    ImGui::TextDisabled("%.3f units", m_BrushGridSize);
+    ImGui::TextDisabled("%.3f", m_BrushGridSize);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Navigation");
+    ImGui::BulletText("Z - mouselook in the 3D view");
+    ImGui::BulletText("WASD / QE - fly, Shift to sprint");
+    ImGui::BulletText("RMB drag - look, MMB - pan");
+    ImGui::BulletText("[ / ] - grid size");
+    ImGui::BulletText("Click - select (3D or 2D views)");
 
     ImGui::Separator();
 

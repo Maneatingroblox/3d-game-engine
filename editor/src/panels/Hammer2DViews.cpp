@@ -75,6 +75,11 @@ void EditorApp::DrawHammer2DViews() {
         const bool hovered = ImGui::IsItemHovered();
         const ImVec2 center(origin.x + size.x * 0.5f, origin.y + size.y * 0.5f);
 
+        // NOTE: [ and ] are handled once per frame in OnUpdate(), not here.
+        // Win32 key messages are routed to Input directly, so ImGui never
+        // swallows them; handling them in each pane as well would step the grid
+        // three times (once per view) on a single key press.
+
         // ---- navigation: wheel zooms about the cursor, RMB/MMB drag pans ----
         ImGuiIO& io = ImGui::GetIO();
         if (hovered && io.MouseWheel != 0.0f) {
@@ -120,7 +125,12 @@ void EditorApp::DrawHammer2DViews() {
         // ---- background + grid ---------------------------------------------
         dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), IM_COL32(12, 12, 14, 255));
 
-        const float step = GridStepFor(ppu);
+        // Grid spacing is the user's grid size ([ and ] change it), but if that
+        // would draw lines closer than a few pixels we step up to the next
+        // power of two until it is legible - Hammer does the same, so zooming
+        // out never turns the pane into a solid block of grid lines.
+        float step = m_BrushGridSize > 0.0f ? m_BrushGridSize : GridStepFor(ppu);
+        while (step * ppu < 4.0f) step *= 2.0f;
         const float majorEvery = 8.0f;
 
         // Visible world range along each pane axis.
@@ -229,22 +239,58 @@ void EditorApp::DrawHammer2DViews() {
             dl->AddCircle(s, 8.0f, IM_COL32(120, 220, 255, 160), 16);
         }
 
-        // ---- click to select a brush in this pane --------------------------
+        // ---- click to select in this pane ----------------------------------
+        // Considers brushes AND mesh entities, picking whichever footprint the
+        // cursor is inside; ties go to the smallest, so a small prop sitting on
+        // a large floor is still selectable. Previously only brushes were
+        // tested, so clicking any ordinary entity did nothing.
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             float mh, mv;
             screenToWorldAxes(io.MousePos, mh, mv);
-            UUID hit{0};
+
+            UUID hitBrush{0};
+            entt::entity hitEntity = entt::null;
             float bestArea = 0.0f;
+            auto consider = [&](float minH, float maxH, float minV, float maxV,
+                                UUID brushId, entt::entity ent) {
+                if (mh < minH || mh > maxH || mv < minV || mv > maxV) return;
+                const float area = std::max(maxH - minH, 1e-4f) * std::max(maxV - minV, 1e-4f);
+                if (hitBrush == UUID{0} && hitEntity == entt::null) {
+                    hitBrush = brushId; hitEntity = ent; bestArea = area;
+                } else if (area < bestArea) {
+                    hitBrush = brushId; hitEntity = ent; bestArea = area;
+                }
+            };
+
             for (const auto& brush : m_Engine.GetBrushMap().Brushes()) {
                 const AABB bounds = brush.Bounds();
                 if (!bounds.Valid()) continue;
-                if (mh < bounds.min[map.horizontal] || mh > bounds.max[map.horizontal]) continue;
-                if (mv < bounds.min[map.vertical] || mv > bounds.max[map.vertical]) continue;
-                const float area = (bounds.max[map.horizontal] - bounds.min[map.horizontal]) *
-                                   (bounds.max[map.vertical] - bounds.min[map.vertical]);
-                if (hit == UUID{0} || area < bestArea) { hit = brush.id; bestArea = area; }
+                consider(bounds.min[map.horizontal], bounds.max[map.horizontal],
+                         bounds.min[map.vertical], bounds.max[map.vertical],
+                         brush.id, entt::null);
             }
-            m_SelectedBrush = hit;
+            m_Engine.GetScene().Each<TransformComponent, MeshRendererComponent>(
+                [&](Entity e, TransformComponent& tc, MeshRendererComponent&) {
+                    const vec3 p = vec3(tc.worldMatrix[3]);
+                    const vec3 s = tc.local.scale;
+                    const float hh = 0.5f * std::fabs(s[map.horizontal]);
+                    const float hv = 0.5f * std::fabs(s[map.vertical]);
+                    consider(p[map.horizontal] - hh, p[map.horizontal] + hh,
+                             p[map.vertical] - hv, p[map.vertical] + hv,
+                             UUID{0}, e.Handle());
+                });
+
+            if (hitBrush != UUID{0}) {
+                // Selects the brush *and* its owning entity, so the Inspector
+                // and the gizmo follow the click.
+                SelectEntityForBrush(hitBrush);
+            } else if (hitEntity != entt::null) {
+                m_SelectedEntity = hitEntity;
+                m_SelectedBrush = UUID{0};
+            } else {
+                m_SelectedEntity = entt::null;
+                m_SelectedBrush = UUID{0};
+            }
             m_SoftwarePreviewDirty = true;
         }
 
