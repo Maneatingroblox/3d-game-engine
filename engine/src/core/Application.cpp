@@ -557,6 +557,14 @@ void Application::MainLoop() {
     auto lastTime = clock::now();
 
     while (m_Running) {
+        // ORDER MATTERS. NewFrame() rolls the edge-triggered state over: it
+        // clears the per-frame pressed/released sets and the wheel delta, and
+        // recomputes the mouse delta from the previous position. It must run
+        // BEFORE the messages for this frame are pumped, otherwise it wipes the
+        // very events the pump just recorded and WasKeyPressed()/WheelDelta()
+        // never report anything to OnUpdate().
+        Input::Get().NewFrame();
+
         if (!m_Window.PumpMessages()) { m_Running = false; break; }
         if (m_Window.IsMinimized()) continue;
 
@@ -564,8 +572,6 @@ void Application::MainLoop() {
         float dt = std::chrono::duration<float>(now - lastTime).count();
         lastTime = now;
         dt = std::min(dt, 0.1f); // clamp to avoid huge steps after a stall/breakpoint
-
-        Input::Get().NewFrame();
 
         // Tell the engine's input layer whether Dear ImGui is currently using
         // the keyboard/mouse (text field focused, cursor over a panel, ...).

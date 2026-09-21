@@ -81,7 +81,10 @@ public:
     bool WasKeyReleased(int vkCode) const;
     bool IsMouseButtonDown(int button) const;
     vec2 MousePosition() const { return m_MousePos; }
-    vec2 MouseDelta() const { return m_MouseDelta; }
+    // Movement accumulated since NewFrame(). Computed live rather than cached,
+    // because NewFrame() runs before this frame's messages are pumped - a value
+    // snapshotted there would always be one frame stale.
+    vec2 MouseDelta() const { return m_MousePos - m_LastMousePos; }
     float WheelDelta() const { return m_WheelDelta; }
 
     void SetCursorLocked(bool locked) { m_CursorLocked = locked; }
@@ -98,7 +101,6 @@ private:
     bool m_MouseDown[8] = { false };
     vec2 m_MousePos{0.0f};
     vec2 m_LastMousePos{0.0f};
-    vec2 m_MouseDelta{0.0f};
     float m_WheelDelta = 0.0f;
     bool m_CursorLocked = false;
     bool m_UIWantsKeyboard = false;

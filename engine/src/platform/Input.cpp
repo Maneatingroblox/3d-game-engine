@@ -33,9 +33,11 @@ void Input::OnMouseWheel(float delta) {
 }
 
 void Input::NewFrame() {
+    // Called at the TOP of the frame, before messages are pumped. Everything
+    // here is edge-triggered state that must only reflect the frame about to
+    // be processed. MouseDelta() derives from m_LastMousePos on demand.
     m_Pressed.fill(false);
     m_Released.fill(false);
-    m_MouseDelta = m_MousePos - m_LastMousePos;
     m_LastMousePos = m_MousePos;
     m_WheelDelta = 0.0f;
 }
@@ -45,7 +47,6 @@ void Input::ResetState() {
     m_Pressed.fill(false);
     m_Released.fill(false);
     for (bool& b : m_MouseDown) b = false;
-    m_MouseDelta = vec2(0.0f);
     m_LastMousePos = m_MousePos;
     m_WheelDelta = 0.0f;
 }

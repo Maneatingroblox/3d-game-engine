@@ -14,6 +14,7 @@
 #include "engine/render/RenderTypes.h"
 #include "engine/render/SoftwareRenderer.h"
 #include "engine/render/SoftCanvas.h"
+#include "engine/platform/Input.h"
 #include <imgui.h>
 #include <algorithm>
 #include <cctype>
@@ -468,6 +469,101 @@ static void TestCameraYawSign() {
     }
 }
 
+// Input::NewFrame() must run at the TOP of the frame, before the platform
+// message pump, and OnUpdate() must then see everything that arrived during
+// that pump. The loop originally pumped messages first and called NewFrame()
+// afterwards, which wiped the pressed/released sets and the wheel delta before
+// any consumer could read them: WasKeyPressed() and WheelDelta() were dead, so
+// the editor's "F to frame" and wheel speed control silently did nothing.
+//
+// This simulates one full frame in the documented order and asserts the
+// edge-triggered state survives to where OnUpdate() reads it.
+static void TestInputFrameOrdering() {
+    Input& in = Input::Get();
+    in.ResetState();
+
+    // ---- frame 1: press W, move the mouse, spin the wheel ------------------
+    in.NewFrame();          // top of frame, before the pump
+    in.OnKeyDown('W');      // <- messages pumped here
+    in.OnMouseMove(100, 50);
+    in.OnMouseMove(110, 60);
+    in.OnMouseWheel(2.0f);
+
+    // OnUpdate() reads here.
+    CHECK(in.IsKeyDown('W'));
+    CHECK(in.WasKeyPressed('W'));        // the edge must still be visible
+    CHECK(in.WheelDelta() == 2.0f);      // and so must the accumulated wheel
+    CHECK(in.MouseDelta().x == 110.0f);  // delta measured from frame start (0,0)
+    CHECK(in.MouseDelta().y == 60.0f);
+
+    // ---- frame 2: nothing happens ------------------------------------------
+    in.NewFrame();
+    CHECK(in.IsKeyDown('W'));            // still held: level-triggered
+    CHECK(!in.WasKeyPressed('W'));       // but no longer a fresh press
+    CHECK(in.WheelDelta() == 0.0f);      // wheel is per-frame
+    CHECK(in.MouseDelta().x == 0.0f);    // no motion this frame
+    CHECK(in.MouseDelta().y == 0.0f);
+
+    // ---- frame 3: release W, drag the mouse further ------------------------
+    in.NewFrame();
+    in.OnKeyUp('W');
+    in.OnMouseMove(130, 60);
+    CHECK(!in.IsKeyDown('W'));
+    CHECK(in.WasKeyReleased('W'));
+    CHECK(in.MouseDelta().x == 20.0f);   // 130 - 110, relative to frame start
+
+    // ---- mouse buttons drive the camera capture latch ----------------------
+    in.NewFrame();
+    in.OnMouseButton(1, true);
+    CHECK(in.IsMouseButtonDown(1));
+    in.NewFrame();
+    CHECK(in.IsMouseButtonDown(1));      // held across frames until released
+    in.OnMouseButton(1, false);
+    CHECK(!in.IsMouseButtonDown(1));
+
+    // ---- focus loss must not leave keys stuck down -------------------------
+    in.NewFrame();
+    in.OnKeyDown('A');
+    CHECK(in.IsKeyDown('A'));
+    in.ResetState();                     // WM_KILLFOCUS
+    CHECK(!in.IsKeyDown('A'));
+    CHECK(in.MouseDelta().x == 0.0f);    // and no phantom jump on refocus
+
+    // ---- UI capture flags round-trip ---------------------------------------
+    in.SetUICapture(true, false);
+    CHECK(in.UIWantsKeyboard());
+    CHECK(!in.UIWantsMouse());
+    in.SetUICapture(false, true);
+    CHECK(!in.UIWantsKeyboard());
+    CHECK(in.UIWantsMouse());
+    in.ResetState();
+    in.SetUICapture(false, false);
+    std::printf("  input frame ordering, edge state, capture flags: ok\n");
+}
+
+// The main loop's ordering is the other half of the contract above, and it
+// lives in Windows-only code this suite cannot execute. Assert it at the
+// source level so the two calls can't be swapped back.
+static void TestMainLoopPumpsAfterNewFrame() {
+    std::ifstream f(Paths::Resolve("engine/src/core/Application.cpp"));
+    const std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    CHECK(!src.empty());
+
+    const size_t loop = src.find("void Application::MainLoop()");
+    CHECK(loop != std::string::npos);
+    const size_t newFrame = src.find("Input::Get().NewFrame()", loop);
+    const size_t pump = src.find("m_Window.PumpMessages()", loop);
+    const size_t onUpdate = src.find("OnUpdate(dt)", loop);
+    CHECK(newFrame != std::string::npos);
+    CHECK(pump != std::string::npos);
+    CHECK(onUpdate != std::string::npos);
+
+    // NewFrame -> PumpMessages -> OnUpdate, in that order.
+    CHECK(newFrame < pump);
+    CHECK(pump < onUpdate);
+    std::printf("  MainLoop order: NewFrame -> PumpMessages -> OnUpdate\n");
+}
+
 static void TestViewportIsNotBlank() {
     Scene scene("ViewportTest");
     DefaultScene::Build(scene, nullptr);
@@ -825,6 +921,8 @@ int main() {
     std::printf("== primitive winding ==\n");           TestPrimitiveWinding();
     std::printf("== face winding sign convention ==\n"); TestFaceWindingSignConvention();
     std::printf("== camera yaw sign ==\n");              TestCameraYawSign();
+    std::printf("== input frame ordering ==\n");        TestInputFrameOrdering();
+    std::printf("== main loop ordering ==\n");          TestMainLoopPumpsAfterNewFrame();
     std::printf("== viewport renders something ==\n");  TestViewportIsNotBlank();
     std::printf("== physics ==\n");                     TestPhysicsFreeFall();
     std::printf("== scripting ==\n");                   TestScripting();
