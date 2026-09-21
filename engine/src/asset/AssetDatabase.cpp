@@ -49,9 +49,13 @@ void AssetDatabase::Scan(const std::string& rootDir) {
         const fs::path full = it->path();
         std::error_code relEc;
         const fs::path rel = projectRoot.empty() ? full : fs::relative(full, projectRoot, relEc);
-        ae.path = (relEc || rel.empty() || rel.native().rfind("..", 0) == 0)
-                      ? full.generic_string()
-                      : rel.generic_string();
+        // NOTE: compare against generic_string(), never native(). fs::path's
+        // native format is std::wstring on Windows and std::string on POSIX, so
+        // a literal ".." only compiles on POSIX. generic_string() is std::string
+        // on every platform.
+        const std::string relStr = rel.generic_string();
+        const bool escapesRoot = relStr.rfind("..", 0) == 0;
+        ae.path = (relEc || relStr.empty() || escapesRoot) ? full.generic_string() : relStr;
         ae.type = ClassifyByExtension(ae.path);
         ae.lastWriteTime = it->last_write_time(ec);
         m_KnownTimes[ae.path] = ae.lastWriteTime;
