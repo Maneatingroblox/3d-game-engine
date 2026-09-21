@@ -323,6 +323,151 @@ static void TestPrimitiveWinding() {
 // reference renderer and require real geometry to be visible, plus a PNG on
 // disk to look at.
 // ---------------------------------------------------------------------------
+// Locks down the face-winding sign convention that BOTH rasterizers must obey.
+//
+// This is the regression test for the "all the shapes look inside-out" bug. The
+// engine builds meshes counter-clockwise as seen from outside, and projects with
+// a right-handed view matrix into [0,1] depth. Under that combination a triangle
+// that FACES the camera lands on screen with a NEGATIVE signed area (screen Y
+// points down, which mirrors the winding).
+//
+// Consequences, both of which are asserted here:
+//   * SoftwareRenderer culls `area >= 0` - back faces, correct.
+//   * D3D11 must be told FrontCounterClockwise = TRUE, because its default
+//     (FALSE) means "front faces are clockwise / positive area" - the exact
+//     inverse. Leaving it zero-initialised culled every outward face and drew
+//     only the interior ones, which is what made the shapes look inverted.
+static void TestFaceWindingSignConvention() {
+    // A single triangle whose outward normal is +Z, wound CCW when viewed from
+    // +Z (i.e. from where the camera sits).
+    const vec3 tri[3] = { vec3(-1, -1, 0), vec3(1, -1, 0), vec3(0, 1, 0) };
+    const vec3 outward(0, 0, 1);
+
+    const vec3 geoNormal = glm::normalize(glm::cross(tri[1] - tri[0], tri[2] - tri[0]));
+    CHECK(glm::dot(geoNormal, outward) > 0.9f);
+
+    RenderCamera cam = MakeCamera(vec3(0, 0, 5), 0.0f, 0.0f, 60.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+    const mat4 viewProj = cam.ViewProj();
+
+    // Project to the same screen space the rasterizer uses: NDC -> pixels with Y
+    // flipped (top-left origin).
+    const float w = 1280.0f, h = 720.0f;
+    vec2 scr[3];
+    for (int i = 0; i < 3; i++) {
+        const vec4 clip = viewProj * vec4(tri[i], 1.0f);
+        CHECK(clip.w > 0.0f);  // in front of the camera
+        const vec3 ndc = vec3(clip) / clip.w;
+        CHECK(ndc.z >= 0.0f && ndc.z <= 1.0f);  // [0,1] depth, not OpenGL's [-1,1]
+        scr[i] = vec2((ndc.x * 0.5f + 0.5f) * w, (0.5f - ndc.y * 0.5f) * h);
+    }
+
+    const float area = (scr[1].x - scr[0].x) * (scr[2].y - scr[0].y) -
+                       (scr[2].x - scr[0].x) * (scr[1].y - scr[0].y);
+    std::printf("  camera-facing triangle signed screen area: %.1f\n", area);
+    CHECK(area < 0.0f);  // <-- the whole convention in one assertion
+
+    // And the mirror image: a triangle wound the other way (facing away) must
+    // come out positive, so the two cases can never be confused.
+    const vec2 flipped[3] = { scr[0], scr[2], scr[1] };
+    const float backArea = (flipped[1].x - flipped[0].x) * (flipped[2].y - flipped[0].y) -
+                           (flipped[2].x - flipped[0].x) * (flipped[1].y - flipped[0].y);
+    CHECK(backArea > 0.0f);
+
+    // Every builtin primitive must agree: sample each outward-facing triangle of
+    // a cube from a camera placed along its normal and confirm the sign holds.
+    MeshData cube;
+    CHECK(MeshData::CreateBuiltin("builtin:cube", cube));
+    CHECK(cube.indices.size() >= 36);
+    int facing = 0;
+    for (size_t i = 0; i + 2 < cube.indices.size(); i += 3) {
+        const vec3 p0 = cube.vertices[cube.indices[i + 0]].position;
+        const vec3 p1 = cube.vertices[cube.indices[i + 1]].position;
+        const vec3 p2 = cube.vertices[cube.indices[i + 2]].position;
+        const vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
+        const vec3 c = (p0 + p1 + p2) / 3.0f;
+
+        // Look straight at this face from outside.
+        RenderCamera fc;
+        fc.position = c + n * 4.0f;
+        fc.view = glm::lookAt(fc.position, c, std::fabs(n.y) > 0.9f ? vec3(0, 0, 1) : vec3(0, 1, 0));
+        fc.proj = MakeProjectionMatrix(60.0f, 16.0f / 9.0f, 0.1f, 100.0f);
+        const mat4 vp = fc.ViewProj();
+
+        vec2 s[3];
+        bool ok = true;
+        const vec3 src[3] = { p0, p1, p2 };
+        for (int k = 0; k < 3; k++) {
+            const vec4 clip = vp * vec4(src[k], 1.0f);
+            if (clip.w <= 0.0f) { ok = false; break; }
+            const vec3 ndc = vec3(clip) / clip.w;
+            s[k] = vec2((ndc.x * 0.5f + 0.5f) * w, (0.5f - ndc.y * 0.5f) * h);
+        }
+        if (!ok) continue;
+        const float a = (s[1].x - s[0].x) * (s[2].y - s[0].y) -
+                        (s[2].x - s[0].x) * (s[1].y - s[0].y);
+        CHECK(a < 0.0f);
+        facing++;
+    }
+    std::printf("  cube: %d outward triangles, all negative-area when faced\n", facing);
+    CHECK(facing == 12);
+
+    // The D3D11 half of the convention lives in Windows-only code that this
+    // headless suite cannot compile, let alone run. Guard it at the source
+    // level instead: every rasterizer state that culls must opt in to
+    // counter-clockwise front faces, because a zero-initialised
+    // D3D11_RASTERIZER_DESC means FrontCounterClockwise = FALSE and would cull
+    // exactly the faces we just proved are the visible ones.
+    std::ifstream rf(Paths::Resolve("engine/src/render/Renderer.cpp"));
+    const std::string rendererSrc((std::istreambuf_iterator<char>(rf)),
+                                   std::istreambuf_iterator<char>());
+    CHECK(!rendererSrc.empty());
+    size_t declared = 0;
+    for (size_t at = rendererSrc.find("FrontCounterClockwise"); at != std::string::npos;
+         at = rendererSrc.find("FrontCounterClockwise", at + 1)) {
+        const size_t eol = rendererSrc.find('\n', at);
+        const std::string line = rendererSrc.substr(at, eol - at);
+        if (line.find("TRUE") != std::string::npos || line.find("true") != std::string::npos)
+            declared++;
+    }
+    std::printf("  Renderer.cpp sets FrontCounterClockwise = TRUE %zu time(s)\n", declared);
+    CHECK(declared >= 2);  // the default/cull-back state and the shadow state
+}
+
+// MakeCamera takes a yaw/pitch pair, and the inverse of that mapping is
+// yaw = atan2(-dx, -dz). Getting the sign backwards aims the camera 180 degrees
+// away from where you meant - which is exactly how fwshot's "side" preset ended
+// up rendering zero triangles and "persp" only three. Pin the round-trip down.
+static void TestCameraYawSign() {
+    struct Case { const char* name; vec3 pos; };
+    const Case cases[] = {
+        { "front", vec3(0.0f, 3.0f, 16.0f) },
+        { "side",  vec3(16.0f, 3.0f, 0.0f) },
+        { "persp", vec3(10.0f, 7.0f, 13.0f) },
+        { "behind", vec3(-8.0f, 4.0f, -9.0f) },
+    };
+    const vec3 target(0.0f, 0.5f, 0.0f);
+
+    for (const Case& c : cases) {
+        const vec3 d = glm::normalize(target - c.pos);
+        const float yaw = Degrees(std::atan2(-d.x, -d.z));
+        const float pitch = Degrees(std::asin(glm::clamp(d.y, -1.0f, 1.0f)));
+
+        RenderCamera cam = MakeCamera(c.pos, yaw, pitch, 60.0f, 16.0f / 9.0f, 0.05f, 2000.0f);
+        // The camera derived from those angles must actually look at the target.
+        const float alignment = glm::dot(cam.Forward(), d);
+        std::printf("  %-7s yaw %+7.1f pitch %+6.1f -> forward alignment %.4f\n",
+                    c.name, yaw, pitch, alignment);
+        CHECK(alignment > 0.999f);
+
+        // And the target must land inside the frustum, in front of the camera.
+        const vec4 clip = cam.ViewProj() * vec4(target, 1.0f);
+        CHECK(clip.w > 0.0f);
+        const vec3 ndc = vec3(clip) / clip.w;
+        CHECK(std::fabs(ndc.x) <= 1.0f);
+        CHECK(std::fabs(ndc.y) <= 1.0f);
+    }
+}
+
 static void TestViewportIsNotBlank() {
     Scene scene("ViewportTest");
     DefaultScene::Build(scene, nullptr);
@@ -678,6 +823,8 @@ int main() {
     std::printf("== scene serialization ==\n");         TestSceneSerialization();
     std::printf("== camera / projection math ==\n");    TestCameraMatrices();
     std::printf("== primitive winding ==\n");           TestPrimitiveWinding();
+    std::printf("== face winding sign convention ==\n"); TestFaceWindingSignConvention();
+    std::printf("== camera yaw sign ==\n");              TestCameraYawSign();
     std::printf("== viewport renders something ==\n");  TestViewportIsNotBlank();
     std::printf("== physics ==\n");                     TestPhysicsFreeFall();
     std::printf("== scripting ==\n");                   TestScripting();

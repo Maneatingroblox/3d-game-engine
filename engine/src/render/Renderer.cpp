@@ -74,9 +74,23 @@ bool Renderer::Init() {
     shadowSampDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
     dev->CreateSamplerState(&shadowSampDesc, &m_ShadowSampler);
 
+    // WINDING CONVENTION - this must match the geometry the engine produces.
+    //
+    // Every mesh in Forgeworks (MeshData::CreateBox/Sphere/Cylinder/..., the
+    // brush compiler, RecalculateNormals()) is authored counter-clockwise as
+    // seen from OUTSIDE the surface, and the CPU reference renderer culls on
+    // that basis. In D3D11's screen space Y points down, so such a front face
+    // appears *counter-clockwise* and must be declared as such.
+    //
+    // FrontCounterClockwise defaults to FALSE, which told the rasterizer the
+    // exact opposite: every outward-facing triangle was treated as a back face
+    // and culled, leaving only the far side of each object on screen. That is
+    // the "shapes look like their vertices are inverted" symptom - you were
+    // seeing each object's interior/back wall instead of its front.
     D3D11_RASTERIZER_DESC rsDesc{};
     rsDesc.FillMode = D3D11_FILL_SOLID;
     rsDesc.CullMode = D3D11_CULL_BACK;
+    rsDesc.FrontCounterClockwise = TRUE;
     rsDesc.DepthClipEnable = TRUE;
     dev->CreateRasterizerState(&rsDesc, &m_DefaultRasterizer);
     rsDesc.FillMode = D3D11_FILL_WIREFRAME;
@@ -86,6 +100,7 @@ bool Renderer::Init() {
     D3D11_RASTERIZER_DESC shadowRs{};
     shadowRs.FillMode = D3D11_FILL_SOLID;
     shadowRs.CullMode = D3D11_CULL_FRONT; // reduce peter-panning
+    shadowRs.FrontCounterClockwise = TRUE; // same convention as the main pass
     shadowRs.DepthClipEnable = TRUE;
     shadowRs.DepthBias = 5000;
     shadowRs.DepthBiasClamp = 0.0f;

@@ -31,6 +31,12 @@ public:
     // Scene the editor opens on startup (empty = assets/scenes/default.fwscene).
     void SetStartupScene(const std::string& path) { m_StartupScenePath = path; }
 
+    // Switches between the Godot-style single-viewport layout and the Hammer
+    // four-view brush-editing layout. Also driven by the toolbar's
+    // "[ Hammer Mode ]" button; exposed here so tools/fwui can screenshot it.
+    void SetEditorMode(EditorMode mode) { m_Mode = mode; }
+    EditorMode GetEditorMode() const { return m_Mode; }
+
     // Resolution fraction used for the CPU viewport preview (1.0 = full size).
     // The default (0.5) keeps the interactive CPU path responsive; screenshot
     // tools ask for 1.0.
@@ -61,7 +67,11 @@ private:
     void DrawAssetBrowserPanel();
     void DrawConsolePanel();
     void DrawScriptEditorPanel();
+    // Script editor file I/O (both resolve through Paths::Resolve()).
+    bool LoadScriptIntoEditor(const std::string& path);
+    bool SaveOpenScript();
     void DrawHammerToolPanel();
+    void DrawHammer2DViews();
     void DrawLightmapBakePanel();
     void DrawEntityNode(entt::entity e);
 
@@ -104,12 +114,29 @@ private:
     entt::entity m_SelectedEntity = entt::null;
     UUID m_SelectedBrush{0};
 
+    // Pan/zoom of each Hammer 2D pane (Top / Front / Side).
+    struct HammerViewState {
+        float panX = 0.0f;   // world units, along the pane's horizontal axis
+        float panY = 0.0f;   // world units, along the pane's vertical axis
+        float zoom = 16.0f;  // pixels per world unit
+    };
+    HammerViewState m_HammerViews[3];
+    // Hammer-style grid snapping for brush creation/editing.
+    bool m_BrushSnapEnabled = true;
+    float m_BrushGridSize = 1.0f;
+    // Hammer mode gets its own dock layout (4 views + tool palette); this
+    // tracks which layout is currently built so switching modes rebuilds it.
+    EditorMode m_BuiltLayoutMode = EditorMode::Scene;
+
     // Edit-time fly camera state
     vec3 m_CamPos{0, 3, 8};
     float m_CamYaw = -90.0f, m_CamPitch = -15.0f;
     float m_CamSpeed = 6.0f;
     bool m_ViewportFocused = false;
     bool m_ViewportHovered = false;
+    // True while a right-mouse "fly" drag owns the mouse: the look keeps
+    // working even when the cursor wanders off the viewport panel.
+    bool m_CameraCaptured = false;
     vec2 m_ViewportSize{1280, 720};
     vec2 m_ViewportPos{0, 0};
 
@@ -118,6 +145,9 @@ private:
     std::string m_StartupScenePath;
     std::string m_OpenScriptPath;
     std::string m_ScriptEditBuffer;
+    // Script editor UI state: last action message and unsaved-changes marker.
+    std::string m_ScriptStatus;
+    bool m_ScriptDirty = false;
 
     bool m_ShowDemoWindow = false;
     float m_BakeProgress = -1.0f;

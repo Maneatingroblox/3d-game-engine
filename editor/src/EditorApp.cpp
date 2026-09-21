@@ -153,35 +153,51 @@ RenderCamera EditorApp::BuildEditorCamera() const {
 void EditorApp::UpdateEditorCamera(float dt) {
     Input& input = Input::Get();
 
+    // While the right mouse button is held the camera "captures" the mouse:
+    // the drag keeps steering even if the cursor leaves the viewport rect,
+    // which is what every editor (Hammer, Unreal, Unity) does. Without this the
+    // look stopped the moment the pointer crossed a panel edge.
+    const bool rmbDown = input.IsMouseButtonDown(1);
+    if (rmbDown && m_ViewportHovered) m_CameraCaptured = true;
+    if (!rmbDown) m_CameraCaptured = false;
+
+    // Typing in a text field (Script Editor, Inspector) must never drive the
+    // camera. A captured drag outranks that: the user is actively flying.
+    const bool uiHasKeyboard = input.UIWantsKeyboard() && !m_CameraCaptured;
+    const bool viewportActive = m_CameraCaptured || m_ViewportHovered || m_ViewportFocused;
+
     // Mouse wheel adjusts the fly speed (Hammer/Unreal style), so a "stuck"
     // camera is easy to escape.
-    if (m_ViewportHovered && std::abs(input.WheelDelta()) > 0.0f) {
+    if ((m_ViewportHovered || m_CameraCaptured) && std::abs(input.WheelDelta()) > 0.0f) {
         m_CamSpeed = glm::clamp(m_CamSpeed * std::pow(1.15f, input.WheelDelta()), 0.1f, 500.0f);
     }
 
-    if (!m_ViewportHovered && !m_ViewportFocused) return;
+    if (!viewportActive) return;
 
-    const bool fly = input.IsMouseButtonDown(1); // RMB: fly camera, Source/Unreal style
-    if (fly) {
+    if (m_CameraCaptured) {
         // Dragging right turns the view right; yaw decreases because a
         // positive yaw rotation about +Y turns towards -X.
         const vec2 delta = input.MouseDelta();
         m_CamYaw -= delta.x * 0.15f;
         m_CamPitch = glm::clamp(m_CamPitch - delta.y * 0.15f, -89.0f, 89.0f);
+        if (glm::length2(delta) > 0.0f) m_SoftwarePreviewDirty = true;
     }
 
     vec3 fwd = YawPitchForward(m_CamYaw, m_CamPitch);
     const vec3 right = glm::normalize(glm::cross(fwd, vec3(0, 1, 0)));
     const vec3 up(0, 1, 0);
 
-    float speed = m_CamSpeed * (input.IsKeyDown(VK_SHIFT) ? 3.0f : 1.0f) * dt;
     vec3 move(0.0f);
-    if (input.IsKeyDown('W')) move += fwd;
-    if (input.IsKeyDown('S')) move -= fwd;
-    if (input.IsKeyDown('A')) move -= right;
-    if (input.IsKeyDown('D')) move += right;
-    if (input.IsKeyDown('E') || input.IsKeyDown(VK_SPACE)) move += up;
-    if (input.IsKeyDown('Q') || input.IsKeyDown(VK_CONTROL)) move -= up;
+    if (!uiHasKeyboard) {
+        if (input.IsKeyDown('W') || input.IsKeyDown(VK_UP))    move += fwd;
+        if (input.IsKeyDown('S') || input.IsKeyDown(VK_DOWN))  move -= fwd;
+        if (input.IsKeyDown('A') || input.IsKeyDown(VK_LEFT))  move -= right;
+        if (input.IsKeyDown('D') || input.IsKeyDown(VK_RIGHT)) move += right;
+        if (input.IsKeyDown('E') || input.IsKeyDown(VK_SPACE)) move += up;
+        if (input.IsKeyDown('Q') || input.IsKeyDown(VK_CONTROL)) move -= up;
+    }
+
+    const float speed = m_CamSpeed * (input.IsKeyDown(VK_SHIFT) ? 3.0f : 1.0f) * dt;
 
     // Movement is allowed with or without RMB held (WASD navigation should not
     // require a mouse button that the user may not realise is the "fly" key).
@@ -190,7 +206,17 @@ void EditorApp::UpdateEditorCamera(float dt) {
         m_SoftwarePreviewDirty = true;
     }
 
-    if (input.WasKeyPressed('F')) m_RequestFrameSelection = true;
+    // Middle-mouse pans, Hammer/Maya style.
+    if (input.IsMouseButtonDown(2) && (m_ViewportHovered || m_CameraCaptured)) {
+        const vec2 delta = input.MouseDelta();
+        if (glm::length2(delta) > 0.0f) {
+            const float panScale = m_CamSpeed * 0.0025f;
+            m_CamPos += (-right * delta.x + up * delta.y) * panScale;
+            m_SoftwarePreviewDirty = true;
+        }
+    }
+
+    if (!uiHasKeyboard && input.WasKeyPressed('F')) m_RequestFrameSelection = true;
 }
 
 void EditorApp::FrameSelection() {
@@ -485,30 +511,64 @@ void EditorApp::BuildDefaultLayout(unsigned int dockspaceId) {
     ImGui::DockBuilderSetNodeSize((ImGuiID)dockspaceId, ImGui::GetMainViewport()->WorkSize);
 
     ImGuiID center = (ImGuiID)dockspaceId;
+    // Slim toolbar row across the very top, spanning the full width. Splitting
+    // it off the *root* (before the side/bottom panels) keeps it a true toolbar
+    // rather than a strip that only covers the viewport column - and because it
+    // is a real dock node the viewport starts below it instead of being
+    // overlapped by a floating bar.
+    ImGuiID toolbarNode = ImGui::DockBuilderSplitNode(center, ImGuiDir_Up, 0.05f, nullptr, &center);
+    if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(toolbarNode))
+        node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar |          // a bar, not a tab
+                            ImGuiDockNodeFlags_NoDockingOverMe |   // don't let panels land on it
+                            ImGuiDockNodeFlags_NoResizeY;
+
     ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.25f, nullptr, &center);
     ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.18f, nullptr, &center);
     ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.26f, nullptr, &center);
     ImGuiID bottomRight = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Right, 0.5f, nullptr, &bottom);
-    // Slim toolbar row across the top of the working area. It used to float over
-    // the viewport, where it covered the top of the scene and the viewport's
-    // corner overlay text.
-    ImGuiID toolbarNode = ImGui::DockBuilderSplitNode(center, ImGuiDir_Up, 0.055f, nullptr, &center);
-    if (ImGuiDockNode* node = ImGui::DockBuilderGetNode(toolbarNode))
-        node->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;  // a bar, not a tab
 
-    ImGui::DockBuilderDockWindow("Viewport", center);
     ImGui::DockBuilderDockWindow("Toolbar", toolbarNode);
     ImGui::DockBuilderDockWindow("Hierarchy", left);
     ImGui::DockBuilderDockWindow("Inspector", right);
     ImGui::DockBuilderDockWindow("Assets", bottom);
     ImGui::DockBuilderDockWindow("Console", bottomRight);
     ImGui::DockBuilderDockWindow("Lighting", right);
-    ImGui::DockBuilderDockWindow("Hammer Tools", right);
     ImGui::DockBuilderDockWindow("Script Editor", bottom);
+
+    if (m_Mode == EditorMode::Hammer) {
+        // Classic Hammer four-view layout: the 3D camera view and three
+        // orthographic grid panes in a 2x2 grid, with the brush tool palette
+        // down the left edge next to the hierarchy.
+        //
+        //   +-----------+-----------+
+        //   | Viewport  | Top (X/Z) |
+        //   +-----------+-----------+
+        //   | Front(X/Y)| Side (Z/Y)|
+        //   +-----------+-----------+
+        ImGuiID topHalf = center;
+        ImGuiID bottomHalf = ImGui::DockBuilderSplitNode(topHalf, ImGuiDir_Down, 0.5f, nullptr, &topHalf);
+        ImGuiID topRight = ImGui::DockBuilderSplitNode(topHalf, ImGuiDir_Right, 0.5f, nullptr, &topHalf);
+        ImGuiID bottomRightPane = ImGui::DockBuilderSplitNode(bottomHalf, ImGuiDir_Right, 0.5f, nullptr, &bottomHalf);
+
+        ImGui::DockBuilderDockWindow("Viewport", topHalf);
+        ImGui::DockBuilderDockWindow("Top (X/Z)", topRight);
+        ImGui::DockBuilderDockWindow("Front (X/Y)", bottomHalf);
+        ImGui::DockBuilderDockWindow("Side (Z/Y)", bottomRightPane);
+        // The brush palette gets a narrow column of its own between the
+        // hierarchy and the views - Hammer keeps its tools permanently visible,
+        // so docking it *onto* the hierarchy node (where it becomes a hidden
+        // background tab) would defeat the point of the mode.
+        ImGuiID toolCol = ImGui::DockBuilderSplitNode(left, ImGuiDir_Down, 0.55f, nullptr, &left);
+        ImGui::DockBuilderDockWindow("Hammer Tools", toolCol);
+    } else {
+        ImGui::DockBuilderDockWindow("Viewport", center);
+        ImGui::DockBuilderDockWindow("Hammer Tools", right);
+    }
 
     ImGui::DockBuilderFinish((ImGuiID)dockspaceId);
     m_DefaultLayoutBuilt = true;
-    FW_LOG_INFO("Dock layout created");
+    m_BuiltLayoutMode = m_Mode;
+    FW_LOG_INFO("Dock layout created (%s mode)", m_Mode == EditorMode::Hammer ? "Hammer" : "Scene");
 }
 
 void EditorApp::OnImGui() {
@@ -534,7 +594,11 @@ void EditorApp::OnImGui() {
     // layout, a saved layout from another version, or a dock node that was lost
     // (e.g. after the presentation path was switched and ImGui was recreated).
     ImGuiID dockspaceId = ImGui::GetID("EditorDockspace");
-    if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
+    // Rebuild when there is no layout at all, and whenever the editor mode
+    // changed: Scene mode and Hammer mode have genuinely different layouts
+    // (single viewport vs. the four-view grid), so toggling Hammer Mode has to
+    // re-dock the windows or the new panes would never appear.
+    if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr || m_BuiltLayoutMode != m_Mode) {
         BuildDefaultLayout(dockspaceId);
         m_LayoutCheckCountdown = 4;
     }
@@ -548,7 +612,10 @@ void EditorApp::OnImGui() {
     DrawAssetBrowserPanel();
     DrawConsolePanel();
     DrawScriptEditorPanel();
-    if (m_Mode == EditorMode::Hammer) DrawHammerToolPanel();
+    if (m_Mode == EditorMode::Hammer) {
+        DrawHammerToolPanel();
+        DrawHammer2DViews();
+    }
     DrawLightmapBakePanel();
 
     if (m_ShowDemoWindow) ImGui::ShowDemoWindow(&m_ShowDemoWindow);
@@ -663,13 +730,24 @@ void EditorApp::DrawMenuBar() {
 void EditorApp::DrawToolbar() {
     // A slim toolbar row docked above the viewport (see BuildDefaultLayout()). If
     // the layout has not been built yet it still works as a floating bar.
+    // NOTE: no ImGuiWindowFlags_NoSavedSettings here. DockBuilderDockWindow()
+    // records the target node in the window's *settings*, and a window flagged
+    // NoSavedSettings ignores those - which is why the toolbar never actually
+    // docked and kept floating on top of the viewport, hiding the top of the
+    // scene and the overlay text.
+    ImGuiWindowFlags toolbarFlags = ImGuiWindowFlags_NoDecoration |
+                                    ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                                    ImGuiWindowFlags_NoScrollbar;
     if (!m_DefaultLayoutBuilt) {
+        // Only before the dock layout exists: a compact floating bar. Once
+        // docked it must NOT be AlwaysAutoResize, otherwise it fights its dock
+        // node for size and ends up drawn on top of the viewport.
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 30.0f), ImGuiCond_Always, ImVec2(0.5f, 0.0f));
         ImGui::SetNextWindowBgAlpha(0.9f);
+        toolbarFlags |= ImGuiWindowFlags_AlwaysAutoResize;
     }
-    ImGui::Begin("Toolbar", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    ImGui::Begin("Toolbar", nullptr, toolbarFlags);
 
     if (m_Engine.State() == EngineRunState::Editing) {
         if (ImGui::Button(" Play ")) m_Engine.Play();

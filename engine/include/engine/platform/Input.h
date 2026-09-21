@@ -63,6 +63,19 @@ public:
     // "just pressed/released" edge state and compute mouse delta.
     void NewFrame();
 
+    // Clears every held key/button. Called when the window loses focus so keys
+    // held at that moment don't stay "down" forever (which used to send the
+    // editor camera drifting after alt-tab).
+    void ResetState();
+
+    // True while the UI layer (Dear ImGui) owns the keyboard/mouse - e.g. a
+    // text box has focus, or the cursor is over a panel rather than the 3D
+    // viewport. Set once per frame by the application; consumers such as the
+    // editor fly camera use it to ignore input meant for the interface.
+    void SetUICapture(bool keyboard, bool mouse) { m_UIWantsKeyboard = keyboard; m_UIWantsMouse = mouse; }
+    bool UIWantsKeyboard() const { return m_UIWantsKeyboard; }
+    bool UIWantsMouse() const { return m_UIWantsMouse; }
+
     bool IsKeyDown(int vkCode) const;
     bool WasKeyPressed(int vkCode) const;
     bool WasKeyReleased(int vkCode) const;
@@ -88,6 +101,8 @@ private:
     vec2 m_MouseDelta{0.0f};
     float m_WheelDelta = 0.0f;
     bool m_CursorLocked = false;
+    bool m_UIWantsKeyboard = false;
+    bool m_UIWantsMouse = false;
     ScriptEngine* m_ScriptEngine = nullptr;
 };
 

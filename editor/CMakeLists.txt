@@ -8,6 +8,7 @@ add_library(fw_editor STATIC
     src/panels/ConsolePanel.cpp
     src/panels/ScriptEditorPanel.cpp
     src/panels/HammerModePanel.cpp
+    src/panels/Hammer2DViews.cpp
     src/panels/LightmapBakePanel.cpp
 )
 target_link_libraries(fw_editor PUBLIC fw_engine fw_stb)

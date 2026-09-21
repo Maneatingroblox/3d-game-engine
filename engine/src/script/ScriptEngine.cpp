@@ -2,6 +2,7 @@
 #include "engine/scene/Scene.h"
 #include "engine/physics/PhysicsWorld.h"
 #include "engine/core/Log.h"
+#include "engine/core/Paths.h"
 #include <sol/sol.hpp>
 #include <fstream>
 #include <sstream>
@@ -228,9 +229,13 @@ void ScriptEngine::BindAPI() {
 }
 
 bool ScriptEngine::AttachScript(entt::entity entity, const std::string& scriptPath) {
-    std::string src = ReadFile(scriptPath);
+    // Script assets are stored project-relative ("assets/scripts/spin.lua"), so
+    // they must be resolved against the project root - reading the raw path only
+    // worked when the process happened to start in the repository root.
+    const std::string resolved = Paths::Resolve(scriptPath);
+    std::string src = ReadFile(resolved);
     if (src.empty()) {
-        ReportError(scriptPath, "could not read file or file is empty");
+        ReportError(scriptPath, "could not read file or file is empty (looked in '" + resolved + "')");
         return false;
     }
 

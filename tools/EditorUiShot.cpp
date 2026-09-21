@@ -18,7 +18,7 @@
 //
 // Usage: fwui [--out <file.png>] [--width N] [--height N] [--frames N]
 //             [--scene <file.fwscene>] [--root <dir>] [--no-viewport-png]
-//             [--game] [--play]
+//             [--game] [--play] [--hammer]
 
 #include "editor/EditorApp.h"
 #include "game/GameApp.h"
@@ -71,6 +71,8 @@ struct Options {
     bool viewportPng = true;
     bool game = false;   // --game: render the game runtime instead of the editor
     bool play = false;   // --play: start the scene instead of showing the menu
+    bool hammer = false; // --hammer: open the editor in Hammer (four-view) mode
+    std::string focus;   // --focus <window>: bring a docked panel to the front
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -87,6 +89,8 @@ Options ParseArgs(int argc, char** argv) {
         else if (a == "--no-viewport-png") o.viewportPng = false;
         else if (a == "--game") o.game = true;
         else if (a == "--play") o.play = true;
+        else if (a == "--hammer") o.hammer = true;
+        else if (a == "--focus") next(o.focus);
     }
     if (o.width < 320) o.width = 320;
     if (o.height < 240) o.height = 240;
@@ -167,6 +171,7 @@ int main(int argc, char** argv) {
         editor.SetSoftwareMode(true);
         editor.SetViewportPreviewScale(1.0f);
         editor.SetStartupReportFrame(0);
+        if (opt.hammer) editor.SetEditorMode(fw::EditorMode::Hammer);
     }
     appBase.Canvas().Resize(opt.width, opt.height);
     if (!opt.scene.empty()) {
@@ -206,6 +211,11 @@ int main(int argc, char** argv) {
         appBase.Canvas().Clear(IM_COL32(13, 13, 16, 255));
         if (opt.game) game.OnSoftwareRender(appBase.Canvas());
         ImGui::NewFrame();
+        // Raise a background tab (e.g. "Script Editor", which starts docked
+        // behind "Assets") so a screenshot can show it. Done a couple of frames
+        // in, once the dock layout has actually been built.
+        if (!opt.focus.empty() && frame == 2) ImGui::SetWindowFocus(opt.focus.c_str());
+
         if (opt.game) game.OnImGui();          // the real game UI (menu / HUD)
         else editor.OnImGui();                 // the real editor interface
         ImGui::Render();

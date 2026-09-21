@@ -85,7 +85,55 @@ void Application::LogStartupReport() {
 
 void Application::SetupWindowCallbacks() {
     m_Window.OnRawMessage = [](void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam) -> bool {
-        return ImGui_ImplWin32_WndProcHandler((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam) != 0;
+        const bool imguiHandled =
+            ImGui_ImplWin32_WndProcHandler((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam) != 0;
+
+        // Feed the engine's own input state as well. Without this nothing ever
+        // called Input::OnKeyDown/OnMouseMove/OnMouseButton/OnMouseWheel, so
+        // Input was permanently empty: the editor's fly camera never moved
+        // (WASD/RMB-look did nothing), brush picking never saw a click and
+        // Lua's Input table stayed dead. ImGui gets the message first (above)
+        // and we still record it here, because ImGui "handling" a message only
+        // means it wants it for its widgets - the viewport still needs to know
+        // the key/mouse state. Routing is decided later by WantCaptureKeyboard /
+        // WantCaptureMouse, not by swallowing the message here.
+        Input& input = Input::Get();
+        switch (msg) {
+            case WM_KEYDOWN:
+            case WM_SYSKEYDOWN:
+                input.OnKeyDown((int)wParam);
+                break;
+            case WM_KEYUP:
+            case WM_SYSKEYUP:
+                input.OnKeyUp((int)wParam);
+                break;
+            case WM_MOUSEMOVE:
+                input.OnMouseMove((int)(short)LOWORD((DWORD)lParam), (int)(short)HIWORD((DWORD)lParam));
+                break;
+            case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
+                input.OnMouseButton(0, true);  input.OnKeyDown(VK_LBUTTON); break;
+            case WM_LBUTTONUP:
+                input.OnMouseButton(0, false); input.OnKeyUp(VK_LBUTTON);   break;
+            case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
+                input.OnMouseButton(1, true);  input.OnKeyDown(VK_RBUTTON); break;
+            case WM_RBUTTONUP:
+                input.OnMouseButton(1, false); input.OnKeyUp(VK_RBUTTON);   break;
+            case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK:
+                input.OnMouseButton(2, true);  input.OnKeyDown(VK_MBUTTON); break;
+            case WM_MBUTTONUP:
+                input.OnMouseButton(2, false); input.OnKeyUp(VK_MBUTTON);   break;
+            case WM_MOUSEWHEEL:
+                input.OnMouseWheel((float)GET_WHEEL_DELTA_WPARAM((WPARAM)wParam) / (float)WHEEL_DELTA);
+                break;
+            // Focus loss would otherwise leave keys stuck "down" forever (the
+            // classic "camera flies away on its own after alt-tab").
+            case WM_KILLFOCUS:
+                input.ResetState();
+                break;
+            default:
+                break;
+        }
+        return imguiHandled;
     };
     m_Window.OnResize = [this](int w, int h) {
         if (w <= 0 || h <= 0) return;
@@ -518,6 +566,15 @@ void Application::MainLoop() {
         dt = std::min(dt, 0.1f); // clamp to avoid huge steps after a stall/breakpoint
 
         Input::Get().NewFrame();
+
+        // Tell the engine's input layer whether Dear ImGui is currently using
+        // the keyboard/mouse (text field focused, cursor over a panel, ...).
+        // OnUpdate() consumers - above all the editor's fly camera - use this
+        // so typing in the Script Editor doesn't also fly the viewport camera.
+        if (ImGui::GetCurrentContext()) {
+            const ImGuiIO& io = ImGui::GetIO();
+            Input::Get().SetUICapture(io.WantCaptureKeyboard || io.WantTextInput, io.WantCaptureMouse);
+        }
 
         if (!m_FailureScreen) OnUpdate(dt);
 

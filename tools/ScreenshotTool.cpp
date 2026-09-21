@@ -137,8 +137,15 @@ int main(int argc, char** argv) {
     const float aspect = (float)opt.width / (float)opt.height;
     if (opt.camera == "top" && !opt.havePos) { opt.pos = vec3(0.0f, 24.0f, 0.01f); opt.pitch = -89.5f; opt.yaw = 0.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
     else if (opt.camera == "front" && !opt.havePos) { opt.pos = vec3(0.0f, 3.0f, 16.0f); opt.pitch = -4.0f; opt.yaw = 0.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
-    else if (opt.camera == "side" && !opt.havePos) { opt.pos = vec3(16.0f, 3.0f, 0.0f); opt.pitch = -4.0f; opt.yaw = -90.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
-    else if (opt.camera == "persp" && !opt.havePos) { opt.pos = vec3(10.0f, 7.0f, 13.0f); opt.pitch = -18.0f; opt.yaw = -36.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
+    // +90, not -90: from +X looking back at the origin the yaw is positive
+    // under MakeCamera's atan2(-dx, -dz) convention. The negative value faced
+    // the camera out into empty space and rendered nothing at all.
+    else if (opt.camera == "side" && !opt.havePos) { opt.pos = vec3(16.0f, 3.0f, 0.0f); opt.pitch = -8.0f; opt.yaw = 90.0f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
+    // NOTE: yaw is +37.6, not -36. MakeCamera measures yaw as atan2(-dx, -dz),
+    // so from (10,7,13) the angle back towards the origin is POSITIVE. The old
+    // negative value swung the camera around to face away from the scene, which
+    // is why this preset used to render 3 triangles instead of ~550.
+    else if (opt.camera == "persp" && !opt.havePos) { opt.pos = vec3(10.0f, 7.0f, 13.0f); opt.pitch = -21.6f; opt.yaw = 37.6f; opt.havePos = opt.haveYaw = opt.havePitch = true; }
 
     if (!opt.havePos) { opt.pos = vec3(9.0f, 5.5f, 11.0f); opt.havePos = true; }
     if (opt.haveLook) {

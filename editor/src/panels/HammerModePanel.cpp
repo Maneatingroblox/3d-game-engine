@@ -13,6 +13,10 @@
 #include "engine/platform/Input.h"
 #include <imgui.h>
 #include <imgui_stdlib.h>
+#include <ImGuizmo.h>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace fw {
 
@@ -37,7 +41,13 @@ static Ray ViewportMouseRay(const vec2& mouseScreenPos, const vec2& viewportPos,
 }
 
 void EditorApp::HandleBrushPicking() {
-    if (!m_ViewportHovered || !Input::Get().WasKeyPressed(VK_LBUTTON)) return;
+    // Only pick on a fresh left-click inside the 3D viewport, and never while
+    // ImGui owns the mouse (a click on the tool palette, a menu or the gizmo
+    // must not also reach through and reselect geometry behind it).
+    if (!m_ViewportHovered) return;
+    if (ImGui::GetIO().WantCaptureMouse && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) return;
+    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return;
+    if (ImGuizmo::IsOver() || ImGuizmo::IsUsing()) return;
 
     RenderCamera cam = BuildEditorCamera();
     Ray ray = ViewportMouseRay(Input::Get().MousePosition(), m_ViewportPos, m_ViewportSize, cam);
@@ -122,9 +132,36 @@ void EditorApp::DrawHammerToolPanel() {
                         "brush to make it interactive.");
     ImGui::Separator();
 
+    // ---- tool palette: big toggle buttons, like Hammer's left-hand bar ----
     const char* toolNames[] = { "Select", "Block", "Clip", "Vertex", "Carve" };
-    int tool = (int)m_BrushTool;
-    if (ImGui::Combo("Tool", &tool, toolNames, 5)) m_BrushTool = (BrushTool)tool;
+    const char* toolHelp[] = {
+        "Click geometry in the 3D or 2D views to select it",
+        "Create a new axis-aligned block brush",
+        "Split the selected brush along a plane",
+        "Inspect/adjust the selected brush's vertices",
+        "Boolean-subtract the selected brush from the others",
+    };
+    ImGui::TextDisabled("Tools");
+    for (int i = 0; i < 5; i++) {
+        const bool active = ((int)m_BrushTool == i);
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.5f, 0.1f, 1.0f));
+        if (ImGui::Button(toolNames[i], ImVec2(-1, 0))) m_BrushTool = (BrushTool)i;
+        if (active) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", toolHelp[i]);
+    }
+
+    ImGui::Separator();
+
+    // ---- grid snap, the other thing every Hammer user reaches for --------
+    ImGui::TextDisabled("Grid");
+    ImGui::Checkbox("Snap to grid", &m_BrushSnapEnabled);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::DragFloat("##gridsize", &m_BrushGridSize, 0.05f, 0.03125f, 128.0f, "grid %.3f");
+    if (ImGui::SmallButton("/2")) m_BrushGridSize = std::max(m_BrushGridSize * 0.5f, 0.03125f);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("x2")) m_BrushGridSize = std::min(m_BrushGridSize * 2.0f, 128.0f);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%.3f units", m_BrushGridSize);
 
     ImGui::Separator();
 
@@ -133,12 +170,43 @@ void EditorApp::DrawHammerToolPanel() {
         ImGui::Text("New Block");
         ImGui::DragFloat3("Mins", &blockMins.x, 0.1f);
         ImGui::DragFloat3("Maxs", &blockMaxs.x, 0.1f);
+
+        auto snap = [this](vec3 v) {
+            if (!m_BrushSnapEnabled || m_BrushGridSize <= 0.0f) return v;
+            for (int i = 0; i < 3; i++) v[i] = std::round(v[i] / m_BrushGridSize) * m_BrushGridSize;
+            return v;
+        };
+
         if (ImGui::Button("Create Block Brush", ImVec2(-1, 0))) {
-            Brush b = Brush::CreateBox(blockMins, blockMaxs);
+            vec3 mins = snap(blockMins), maxs = snap(blockMaxs);
+            // A zero-thickness box makes a degenerate brush; keep at least one
+            // grid cell on every axis.
+            for (int i = 0; i < 3; i++)
+                if (maxs[i] - mins[i] < 1e-4f) maxs[i] = mins[i] + std::max(m_BrushGridSize, 0.25f);
+
+            Brush b = Brush::CreateBox(mins, maxs);
             b.Rebuild();
-            m_Engine.GetBrushMap().AddBrush(b);
+            if (!b.IsValid()) {
+                FW_LOG_WARN("Block tool: those bounds do not enclose a volume");
+            } else {
+                const UUID id = m_Engine.GetBrushMap().AddBrush(b).id;
+                m_Engine.GetBrushMap().MarkAllDirty();
+                m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
+                m_SelectedBrush = id;
+                m_SoftwarePreviewDirty = true;
+                FW_LOG_INFO("Created block brush (%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f)",
+                            mins.x, mins.y, mins.z, maxs.x, maxs.y, maxs.z);
+            }
+        }
+        if (ImGui::Button("Create Block In Front Of Camera", ImVec2(-1, 0))) {
+            const vec3 c = snap(m_CamPos + YawPitchForward(m_CamYaw, m_CamPitch) * 6.0f);
+            const vec3 half(1.0f, 1.0f, 1.0f);
+            Brush b = Brush::CreateBox(c - half, c + half);
+            b.Rebuild();
+            const UUID id = m_Engine.GetBrushMap().AddBrush(b).id;
             m_Engine.GetBrushMap().MarkAllDirty();
             m_Engine.GetBrushMap().CompileToScene(m_Engine.GetScene(), Paths::Resolve("assets/generated"));
+            m_SelectedBrush = id;
             m_SoftwarePreviewDirty = true;
         }
     } else if (m_BrushTool == BrushTool::Clip) {

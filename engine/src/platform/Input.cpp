@@ -40,6 +40,16 @@ void Input::NewFrame() {
     m_WheelDelta = 0.0f;
 }
 
+void Input::ResetState() {
+    m_Down.fill(false);
+    m_Pressed.fill(false);
+    m_Released.fill(false);
+    for (bool& b : m_MouseDown) b = false;
+    m_MouseDelta = vec2(0.0f);
+    m_LastMousePos = m_MousePos;
+    m_WheelDelta = 0.0f;
+}
+
 bool Input::IsKeyDown(int vk) const { return vk >= 0 && vk < 256 && m_Down[vk]; }
 bool Input::WasKeyPressed(int vk) const { return vk >= 0 && vk < 256 && m_Pressed[vk]; }
 bool Input::WasKeyReleased(int vk) const { return vk >= 0 && vk < 256 && m_Released[vk]; }

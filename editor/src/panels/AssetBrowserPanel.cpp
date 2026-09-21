@@ -51,11 +51,10 @@ void EditorApp::DrawAssetBrowserPanel() {
         ImGui::SameLine();
         if (ImGui::Selectable(entry.path.c_str())) {
             if (entry.type == AssetType::Scene) OpenScene(entry.path);
-            if (entry.type == AssetType::Script) {
-                m_OpenScriptPath = entry.path;
-                std::ifstream in(entry.path);
-                m_ScriptEditBuffer.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            }
+            // Goes through the script editor's loader so the path is resolved
+            // against the project root (reading entry.path directly gave an
+            // empty buffer whenever the working directory wasn't the repo root).
+            if (entry.type == AssetType::Script) LoadScriptIntoEditor(entry.path);
         }
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload("ASSET_PATH", entry.path.c_str(), entry.path.size() + 1);

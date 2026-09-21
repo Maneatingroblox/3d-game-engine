@@ -208,11 +208,8 @@ void EditorApp::DrawInspectorPanel() {
             if (ImGui::InputText("Script Asset", &sc.scriptAsset, ImGuiInputTextFlags_EnterReturnsTrue)) {
                 m_Engine.GetScriptEngine().AttachScript(entity.Handle(), sc.scriptAsset);
             }
-            if (ImGui::SmallButton("Open in Script Editor")) {
-                m_OpenScriptPath = sc.scriptAsset;
-                std::ifstream in(sc.scriptAsset);
-                m_ScriptEditBuffer.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-            }
+            if (ImGui::SmallButton("Open in Script Editor") && !sc.scriptAsset.empty())
+                LoadScriptIntoEditor(sc.scriptAsset);
             ImGui::Checkbox("Enabled", &sc.enabled);
             ImGui::Separator();
             ImGui::TextDisabled("Exported Properties:");
