@@ -118,10 +118,9 @@ void RenderDevice::Resize(int width, int height) {
     CreateSizeDependentResources(width, height);
 }
 
-void RenderDevice::BeginFrame(const float clearColor[4]) {
+void RenderDevice::BindBackBufferTargets() {
+    if (!m_Context || !m_BackBufferRTV) return;
     m_Context->OMSetRenderTargets(1, m_BackBufferRTV.GetAddressOf(), m_DepthStencilView.Get());
-    m_Context->ClearRenderTargetView(m_BackBufferRTV.Get(), clearColor);
-    m_Context->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 
     D3D11_VIEWPORT vp{};
     vp.Width = (float)m_Width;
@@ -129,6 +128,12 @@ void RenderDevice::BeginFrame(const float clearColor[4]) {
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
     m_Context->RSSetViewports(1, &vp);
+}
+
+void RenderDevice::BeginFrame(const float clearColor[4]) {
+    BindBackBufferTargets();
+    m_Context->ClearRenderTargetView(m_BackBufferRTV.Get(), clearColor);
+    m_Context->ClearDepthStencilView(m_DepthStencilView.Get(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 }
 
 void RenderDevice::Present() {

@@ -83,6 +83,19 @@ void Application::LogStartupReport() {
                      m_Window.Width(), m_Window.Height());
 }
 
+void Application::SetupWindowCallbacks() {
+    m_Window.OnRawMessage = [](void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam) -> bool {
+        return ImGui_ImplWin32_WndProcHandler((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam) != 0;
+    };
+    m_Window.OnResize = [this](int w, int h) {
+        if (w <= 0 || h <= 0) return;
+        if (m_SoftwareMode) m_Canvas.Resize(w, h);
+        else m_Device.Resize(w, h);
+        if (m_Renderer) m_Renderer->OnResize(w, h);
+        OnResize(w, h);
+    };
+}
+
 void Application::UpdateWindowTitle(const std::string& title) {
     // The title always says which presentation path is live and which build this
     // is - a screenshot of the window then identifies both without a log.
@@ -107,16 +120,7 @@ bool Application::RunInternal(const std::string& title, int width, int height, b
         return false;
     }
 
-    m_Window.OnRawMessage = [](void* hwnd, unsigned int msg, unsigned long long wParam, long long lParam) -> bool {
-        return ImGui_ImplWin32_WndProcHandler((HWND)hwnd, msg, (WPARAM)wParam, (LPARAM)lParam) != 0;
-    };
-    m_Window.OnResize = [this](int w, int h) {
-        if (w <= 0 || h <= 0) return;
-        if (m_SoftwareMode) m_Canvas.Resize(w, h);
-        else m_Device.Resize(w, h);
-        if (m_Renderer) m_Renderer->OnResize(w, h);
-        OnResize(w, h);
-    };
+    SetupWindowCallbacks();
 
     // ---- presentation path selection ---------------------------------------
     // The GPU path is preferred, but *every* failure below drops us onto the CPU
@@ -171,6 +175,8 @@ bool Application::RunInternal(const std::string& title, int width, int height, b
     const bool started = OnInit();
     UpdateWindowTitle(title);
 
+    if (m_SoftwareMode) OnSoftwarePresentation();
+
     if (!started) {
         FW_LOG_ERROR("Application::OnInit() returned false. Showing the diagnostics screen "
                      "(reason + log) inside the window instead of leaving it blank.");
@@ -189,12 +195,38 @@ bool Application::RunInternal(const std::string& title, int width, int height, b
 
 void Application::SwitchToSoftware(const std::string& reason) {
     if (m_SoftwareMode) return;
+    const int clientWidth = m_Window.Width() > 0 ? m_Window.Width() : 1280;
+    const int clientHeight = m_Window.Height() > 0 ? m_Window.Height() : 720;
+    const bool maximized = m_Window.IsMaximized();
+
     ShutdownImGui();
     m_Renderer.reset();
     m_Device.Shutdown();
+
+    // Recreate the window. A window that has hosted a DXGI flip-model swap chain
+    // is composited from that swap chain - once it is released, GDI painting into
+    // the window is ignored, which is why the fallback could run for thousands of
+    // frames while the window still showed nothing. A fresh HWND has no swap
+    // chain history, so BlitSoftwareFrame() is actually visible.
+    m_Window.Destroy();
+    WindowDesc desc;
+    desc.title = m_Title;
+    desc.width = clientWidth;
+    desc.height = clientHeight;
+    desc.maximized = maximized;
+    if (m_Window.Create(desc)) {
+        FW_LOG_INFO("Window recreated for the CPU presentation path (%dx%d client area)",
+                    m_Window.Width(), m_Window.Height());
+    } else {
+        FW_LOG_ERROR("Could not recreate the window for the CPU presentation path");
+    }
+    SetupWindowCallbacks();
+
     m_SoftwareMode = true;
-    m_Canvas.Resize(m_Window.Width() > 0 ? m_Window.Width() : 1280,
-                    m_Window.Height() > 0 ? m_Window.Height() : 720);
+    m_Canvas.Resize(m_Window.Width() > 0 ? m_Window.Width() : clientWidth,
+                    m_Window.Height() > 0 ? m_Window.Height() : clientHeight);
+    // Let the application drop its GPU-specific resources before ImGui restarts.
+    OnSoftwarePresentation();
     InitImGui(false);
     FW_LOG_WARN("Switched to the CPU presentation path (%s) - the window stays usable without D3D11",
                 reason.c_str());
@@ -403,8 +435,41 @@ bool Application::GpuFrameHasContent(int* distinctColors) {
 #endif
 }
 
+int Application::CountCanvasColors() const {
+    if (m_Canvas.Empty()) return 0;
+    bool seen[1 << 15] = {};
+    int distinct = 0;
+    const int strideY = std::max(1, m_Canvas.Height() / 90);
+    const int strideX = std::max(1, m_Canvas.Width() / 160);
+    const u8* pixels = m_Canvas.Pixels();
+    for (int y = 0; y < m_Canvas.Height(); y += strideY) {
+        for (int x = 0; x < m_Canvas.Width(); x += strideX) {
+            const u8* px = pixels + ((size_t)y * m_Canvas.Width() + (size_t)x) * 4u;
+            const int key = ((px[0] >> 3) << 10) | ((px[1] >> 3) << 5) | (px[2] >> 3);
+            if (!seen[key]) { seen[key] = true; distinct++; }
+        }
+    }
+    return distinct;
+}
+
 void Application::UpdateVisibilityWatchdog() {
-    if (m_SoftwareMode || m_FailureScreen) return;
+    if (m_SoftwareMode) {
+        // Same question, CPU path: does the frame we are about to blit to the
+        // window actually contain anything? Reported once, early, so the log
+        // always answers "did the editor draw?" for either presentation path.
+        if (m_CanvasReported || m_FrameIndex < m_NextWatchdogFrame) return;
+        m_CanvasReported = true;
+        const int distinct = CountCanvasColors();
+        FW_LOG_INFO("Software frame check (frame %d): canvas %dx%d, %d distinct colour(s), ImGui draw lists %d",
+                    m_FrameIndex, m_Canvas.Width(), m_Canvas.Height(), distinct,
+                    ImGui::GetDrawData() ? ImGui::GetDrawData()->CmdListsCount : 0);
+        if (distinct <= 2)
+            FW_LOG_ERROR("The CPU canvas contains no content (%d distinct colour(s)) - nothing can be shown. "
+                         "This means the UI itself drew nothing; see the entries above this line.", distinct);
+        return;
+    }
+
+    if (m_FailureScreen) return;
     if (m_FrameIndex < m_NextWatchdogFrame) return;
 
     int distinct = -1;
@@ -463,6 +528,12 @@ void Application::MainLoop() {
         } else {
             m_Device.BeginFrame(clearColor);
             OnRender();
+            // The renderer may have rendered into an off-screen target (the
+            // editor's viewport). ImGui's D3D11 backend does not set a render
+            // target itself, so without this the whole interface would be drawn
+            // into that texture and the window would keep the clear colour -
+            // which is exactly what made the Map Maker look empty.
+            m_Device.BindBackBufferTargets();
         }
 
         NewImGuiFrame();

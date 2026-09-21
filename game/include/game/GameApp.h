@@ -43,6 +43,8 @@ private:
 
 private:
     void DrawMainMenu();
+    // In-game HUD (crosshair + status line) shown while playing.
+    void DrawHud();
     void DrawSettingsMenu();
     void DrawPauseMenu();
     void StartGame(const std::string& scenePath);

@@ -46,6 +46,10 @@ protected:
     // Called by Application::RunWithScreenshot() after the window image is
     // written: also drops a viewport-only PNG next to it.
     void OnScreenshot(const std::string& path) override;
+    // The app moved to the CPU presentation path: there is no GPU viewport
+    // target any more, so use the CPU viewport preview and drop the targets that
+    // belonged to the destroyed D3D11 device.
+    void OnSoftwarePresentation() override;
 
 private:
     // Panels

@@ -11,6 +11,8 @@ These images are rendered by the engine itself, not hand-drawn or mocked up.
 | `viewport_top.png` | same scene, top-down camera (checks the level from above) |
 | `viewport_wireframe.png` | same scene, `--wireframe` |
 | `game_runtime.png` | same scene through the game runtime's camera settings |
+| `game_menu.png` | `fwui --game` - the game runtime's main menu with the loaded world behind it |
+| `game_hud.png` | `fwui --game --play` - the runtime playing the scene, with the HUD (crosshair + status line) |
 
 Regenerate them with:
 
@@ -39,6 +41,14 @@ no display needed:
 
 It also fails (exit code 2) if the interface produces no visible pixels, which is what keeps
 "the editor is blank" from creeping back in.
+
+The same tool renders the game runtime (`--game`, and `--play` to run the scene instead of
+sitting in the menu):
+
+```bash
+./build-headless/bin/fwui --game --out docs/screenshots/game_menu.png --frames 12
+./build-headless/bin/fwui --game --play --out docs/screenshots/game_hud.png --frames 90
+```
 
 On Windows the editor can capture its own window, including the GPU path:
 

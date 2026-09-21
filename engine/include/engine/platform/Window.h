@@ -48,6 +48,7 @@ public:
     int Width() const { return m_Width; }
     int Height() const { return m_Height; }
     bool IsMinimized() const { return m_Minimized; }
+    bool IsMaximized() const { return m_Maximized; }
 
     HWND Handle() const { return m_Hwnd; }
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -72,6 +73,7 @@ private:
 
     int m_Width = 0, m_Height = 0;
     bool m_Minimized = false;
+    bool m_Maximized = false;
     bool m_Fullscreen = false;
     HWND m_Hwnd = nullptr;
     WINDOWPLACEMENT m_WindowedPlacement{};

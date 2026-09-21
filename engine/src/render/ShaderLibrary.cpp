@@ -34,7 +34,8 @@ static ComPtr<ID3DBlob> CompileShaderFromFile(const std::string& rawPath, const 
         FW_LOG_ERROR("Shader compile failed (%s:%s): %s", path.c_str(), entry,
             errors ? (const char*)errors->GetBufferPointer() : "unknown error");
         FW_LOG_ERROR("The 3D viewport cannot render without its shaders - the editor will use "
-                     "its CPU preview instead (View > CPU Viewport Preview).");
+                     "its CPU preview instead (View > CPU Viewport Preview). This shader is not "
+                     "recompiled or re-logged again.");
         return nullptr;
     }
     return blob;
@@ -73,6 +74,7 @@ ShaderProgram* ShaderLibrary::LoadDepthOnlyShader(const std::string& path) {
     std::string key = path + "#depth";
     auto it = m_Cache.find(key);
     if (it != m_Cache.end()) return it->second.get();
+    if (m_Failed.count(key)) return nullptr;  // do not recompile/re-log a known-bad shader
 
     auto vsBlob = CompileShaderFromFile(path, "VSMain", "vs_5_0");
     if (!vsBlob) { m_Failed.insert(key); return nullptr; }
@@ -94,6 +96,7 @@ ShaderProgram* ShaderLibrary::LoadFullscreenShader(const std::string& path) {
     std::string key = path + "#fullscreen";
     auto it = m_Cache.find(key);
     if (it != m_Cache.end()) return it->second.get();
+    if (m_Failed.count(key)) return nullptr;  // do not recompile/re-log a known-bad shader
 
     auto vsBlob = CompileShaderFromFile(path, "VSMain", "vs_5_0");
     auto psBlob = CompileShaderFromFile(path, "PSMain", "ps_5_0");

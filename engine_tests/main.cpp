@@ -15,6 +15,8 @@
 #include "engine/render/SoftwareRenderer.h"
 #include "engine/render/SoftCanvas.h"
 #include <imgui.h>
+#include <algorithm>
+#include <cctype>
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
@@ -532,6 +534,143 @@ static void TestSoftwareCanvasIsNotBlank() {
     ImGui::DestroyContext();
 }
 
+// ---------------------------------------------------------------------------
+// Shader source lint (no HLSL compiler required)
+// ---------------------------------------------------------------------------
+// A shader that fails to compile can only be caught by D3DCompile, which is not
+// available in every build environment - and shipping one is exactly how the
+// editor ended up with a broken grid shader: `float line = ...`, where `line` is
+// a reserved HLSL keyword (geometry-shader primitive), rejected with
+// "error X3000: syntax error: unexpected token 'line'".
+//
+// This is not a compiler, but it catches that class of mistake before a build
+// reaches a Windows box:
+//   * geometry-shader primitive keywords (line, point, triangle, ...) used as
+//     identifiers anywhere - these have no legitimate use in the engine's
+//     vertex/pixel shaders
+//   * any reserved keyword used as a declared name (`float matrix = ...`)
+//   * a missing VSMain/PSMain entry point
+//   * unbalanced braces
+//   * non-ASCII bytes (D3DCompileFromFile refuses the source)
+static void TestShaderSourcesAreLintable() {
+    // Keywords that are *always* wrong in a vertex/pixel shader.
+    const std::vector<std::string> alwaysWrong = {
+        "line", "point", "lineadj", "triangle", "triangleadj",
+        "pixelshader", "vertexshader", "geometryshader", "hullshader",
+        "domainshader", "computeshader", "technique10", "technique11",
+    };
+    // Keywords that are fine as language constructs ("struct Foo {", "discard;")
+    // but wrong as a name - only flagged when used as a declaration name.
+    const std::vector<std::string> wrongAsName = {
+        "line", "point", "triangle", "matrix", "vector", "texture", "sampler",
+        "cbuffer", "tbuffer", "struct", "string", "discard", "pass", "technique",
+    };
+    const std::vector<std::string> typeKeywords = {
+        "float", "float2", "float3", "float4", "float2x2", "float3x3", "float4x4",
+        "int", "int2", "int3", "int4", "uint", "uint2", "uint3", "uint4",
+        "bool", "half", "double", "static", "const",
+    };
+
+    auto isIdentChar = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
+    auto tokens = [&](const std::string& code) {
+        std::vector<std::string> out;
+        std::string current;
+        for (char c : code) {
+            if (isIdentChar(c)) {
+                current.push_back(c);
+            } else {
+                if (!current.empty()) out.push_back(current);
+                current.clear();
+                out.push_back(std::string(1, c));
+            }
+        }
+        if (!current.empty()) out.push_back(current);
+        return out;
+    };
+    auto isType = [&](const std::string& t) {
+        return std::find(typeKeywords.begin(), typeKeywords.end(), t) != typeKeywords.end();
+    };
+
+    const std::filesystem::path shaderDir = "assets/shaders";
+    CHECK(std::filesystem::exists(shaderDir));
+
+    int files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(shaderDir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string ext = entry.path().extension().string();
+        if (ext != ".hlsl" && ext != ".hlsli") continue;
+        files++;
+
+        std::ifstream file(entry.path());
+        CHECK(file.good());
+        if (!file.good()) continue;
+
+        std::string line, source;
+        int lineNumber = 0;
+        while (std::getline(file, line)) {
+            lineNumber++;
+            source += line + "\n";
+
+            const size_t comment = line.find("//");
+            const std::string code = comment == std::string::npos ? line : line.substr(0, comment);
+            for (unsigned char c : code) {
+                if (c > 127) {
+                    std::printf("FAIL: %s:%d: non-ASCII byte 0x%02X in shader source\n",
+                                entry.path().string().c_str(), lineNumber, (unsigned)c);
+                    g_failures++;
+                    break;
+                }
+            }
+
+            const std::vector<std::string> tk = tokens(code);
+            for (size_t i = 0; i < tk.size(); i++) {
+                const std::string& t = tk[i];
+                if (t.empty() || isIdentChar(t[0]) == false) continue;
+
+                const bool reserved = std::find(alwaysWrong.begin(), alwaysWrong.end(), t) != alwaysWrong.end();
+                bool flagged = reserved;
+
+                // `float line = ...` / `float line,` / `float line)` - a declaration.
+                if (!flagged && std::find(wrongAsName.begin(), wrongAsName.end(), t) != wrongAsName.end()) {
+                    if (i >= 2 && isType(tk[i - 1])) {
+                        const std::string& next = i + 1 < tk.size() ? tk[i + 1] : std::string();
+                        if (next == "=" || next == ";" || next == "," || next == ")" || next == "[") flagged = true;
+                    }
+                }
+                if (flagged) {
+                    std::printf("FAIL: %s:%d: '%s' is a reserved HLSL keyword and cannot be used "
+                                "as an identifier\n",
+                                entry.path().string().c_str(), lineNumber, t.c_str());
+                    g_failures++;
+                }
+            }
+        }
+
+        const int braces = (int)std::count(source.begin(), source.end(), '{') -
+                           (int)std::count(source.begin(), source.end(), '}');
+        if (braces != 0) {
+            std::printf("FAIL: %s: unbalanced braces (%d)\n", entry.path().string().c_str(), braces);
+            g_failures++;
+        }
+
+        if (ext == ".hlsl") {
+            const bool isDepthOnly = entry.path().filename().string().find("ShadowDepth") != std::string::npos;
+            if (source.find("VSMain") == std::string::npos) {
+                std::printf("FAIL: %s: no VSMain entry point - the engine compiles it with VSMain\n",
+                            entry.path().string().c_str());
+                g_failures++;
+            }
+            if (!isDepthOnly && source.find("PSMain") == std::string::npos) {
+                std::printf("FAIL: %s: no PSMain entry point\n", entry.path().string().c_str());
+                g_failures++;
+            }
+        }
+    }
+
+    std::printf("  shader lint: %d file(s) checked in %s\n", files, shaderDir.string().c_str());
+    CHECK(files >= 4);  // Mesh, ShadowDepth, Skybox, Grid (+ Common.hlsli)
+}
+
 int main() {
     std::printf("== paths + starter content ==\n");     TestPathsAndStarterContent();
     std::printf("== hammer brush compile ==\n");        TestBrushCompilePipeline();
@@ -545,6 +684,7 @@ int main() {
     std::printf("== brush csg ==\n");                   TestBrushCSG();
     std::printf("== lightmap bake ==\n");               TestLightmapBake();
     std::printf("== software canvas draws the UI ==\n"); TestSoftwareCanvasIsNotBlank();
+    std::printf("== shader sources ==\n");            TestShaderSourcesAreLintable();
 
     if (g_failures == 0) {
         std::printf("\nALL TESTS PASSED\n");

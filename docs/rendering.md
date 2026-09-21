@@ -22,6 +22,16 @@ volume, which renders as a perfectly blank viewport with no error anywhere. Keep
 CPU reference renderer and the GPU shaders on the same conventions - and testing them -
 is what prevents a silent repeat.
 
+## Render target ownership (do not break this)
+
+`ImGui_ImplDX11_RenderDrawData()` **does not set a render target** - it draws into
+whatever is bound - and `Renderer::RenderScene()` leaves the *editor's* off-screen
+viewport target bound. That combination drew the entire editor interface into the
+viewport texture and left the window showing the clear colour: a fully "successful"
+frame that was empty. `Application::MainLoop` therefore calls
+`RenderDevice::BindBackBufferTargets()` after `OnRender()` and before ImGui, and any
+pass that binds an off-screen target must leave the caller free to re-bind.
+
 ## Passes (D3D11, `engine/src/render/Renderer.cpp`)
 
 1. **Shadow pass** - depth-only render from the primary shadow-casting directional
@@ -114,4 +124,11 @@ directory), so tools work no matter where they are launched from.
    chain, shaders, `Present`); `forgeworks.log` records which one.
 7. `fwui --out check.png` renders the interface itself through the CPU canvas and reports
    draw lists/vertices/coverage - if *that* is empty, the problem is in the UI code, not in
-   the renderer.
+   the renderer. `fwui --game` does the same for the game runtime.
+8. The log's **Visibility check** line answers "is the window showing anything?" for the GPU
+   path (distinct colours in the presented frame), and the **Software frame check** line does
+   the same for the CPU path. A flat frame is detected, logged and healed automatically.
+9. Shader sources are linted by the headless tests (`engine_tests`, "shader sources"):
+   reserved HLSL keywords used as identifiers (`line`, `point`, `triangle`, ...), missing
+   `VSMain`/`PSMain`, unbalanced braces, non-ASCII bytes. `float line = ...` in `Grid.hlsl`
+   was a real bug that this now catches on every platform.

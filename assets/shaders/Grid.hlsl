@@ -55,8 +55,10 @@ PSOutput PSMain(VSOutput input) {
     float2 coord = world.xz / cell;
 
     // Distance (in pixels) to the nearest cell line, per axis.
-    float2 grid = abs(frac(coord - 0.5) - 0.5) / max(fwidth(coord), 1e-6);
-    float line = min(grid.x, grid.y);
+    // ("line" is a reserved HLSL keyword - geometry shader primitives - so the
+    // distance variable must not be called that.)
+    float2 gridPx = abs(frac(coord - 0.5) - 0.5) / max(fwidth(coord), 1e-6);
+    float lineDist = min(gridPx.x, gridPx.y);
 
     // The world axes are highlighted (X = red, Z = blue).
     float2 worldPx = fwidth(world.xz);
@@ -65,7 +67,7 @@ PSOutput PSMain(VSOutput input) {
 
     // Dark lines read well on light floors; a touch of extra alpha keeps them
     // visible on darker surfaces too.
-    float alpha = (1.0 - min(line, 1.0)) * 0.8;
+    float alpha = (1.0 - min(lineDist, 1.0)) * 0.8;
     float3 color = float3(0.10, 0.11, 0.14);
     if (axisX > 0.5) { color = float3(0.85, 0.25, 0.30); alpha = max(alpha, axisX * 0.9); }
     if (axisZ > 0.5) { color = float3(0.30, 0.45, 0.90); alpha = max(alpha, axisZ * 0.9); }

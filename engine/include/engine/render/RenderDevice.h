@@ -33,6 +33,12 @@ public:
 
     void Resize(int width, int height);
     void BeginFrame(const float clearColor[4]);
+    // Binds the swap-chain back buffer (RTV + DSV) and sets the full-size
+    // viewport, without clearing. Call this after rendering into an off-screen
+    // target (the editor's viewport) and before drawing anything that must end
+    // up in the window - including ImGui, whose D3D11 backend renders into the
+    // currently bound target instead of setting one.
+    void BindBackBufferTargets();
     void Present();
 
     int Width() const { return m_Width; }

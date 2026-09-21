@@ -64,6 +64,10 @@ add_compile_definitions(FW_BUILD_ID="${FORGEWORKS_BUILD_ID}")
 add_subdirectory(third_party)
 add_subdirectory(engine)
 
+# The game runtime shell (fw_game) is platform independent too and is linked by
+# fwui to screenshot the game UI; its Windows executable is gated separately.
+add_subdirectory(game)
+
 # The editor UI library (fw_editor) is platform independent and is also used by
 # tools/fwui to screenshot the interface on the CPU, so it is built in every
 # configuration; the Windows executable inside it is gated separately.
@@ -76,8 +80,4 @@ add_subdirectory(tools)
 
 if(FORGEWORKS_HEADLESS)
     add_subdirectory(engine_tests)
-else()
-    if(FORGEWORKS_BUILD_GAME)
-        add_subdirectory(game)
-    endif()
 endif()

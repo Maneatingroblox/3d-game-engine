@@ -46,6 +46,7 @@ LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 self->m_Width = LOWORD(lParam);
                 self->m_Height = HIWORD(lParam);
                 self->m_Minimized = (wParam == SIZE_MINIMIZED);
+                self->m_Maximized = (wParam == SIZE_MAXIMIZED) || IsZoomed(hwnd);
                 if (self->OnResize && wParam != SIZE_MINIMIZED) self->OnResize(self->m_Width, self->m_Height);
             }
             return 0;
@@ -104,6 +105,7 @@ bool Window::Create(const WindowDesc& desc) {
     if (desc.maximized) ShowWindow(m_Hwnd, SW_MAXIMIZE);
     else ShowWindow(m_Hwnd, SW_SHOW);
     UpdateWindow(m_Hwnd);
+    m_Maximized = IsZoomed(m_Hwnd) != 0;
 
     // Launched from a terminal / shortcut the new window can end up behind it;
     // bring it to the front so "nothing appeared" can't be a focus problem.

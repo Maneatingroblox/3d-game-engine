@@ -96,6 +96,10 @@ protected:
     // here - its 3D viewport is an ImGui image - but a game would rasterize its
     // scene into `canvas` here.
     virtual void OnSoftwareRender(SoftCanvas& canvas) { FW_UNUSED(canvas); }
+    // Called when the app moves to the CPU presentation path (or starts there):
+    // subclasses drop anything GPU-specific they still hold (the editor releases
+    // its D3D11 viewport targets and switches to the CPU viewport preview).
+    virtual void OnSoftwarePresentation() {}
     virtual void OnImGui() {}
     virtual void OnShutdown() {}
     virtual void OnResize(int width, int height) { FW_UNUSED(width); FW_UNUSED(height); }
@@ -126,6 +130,11 @@ private:
     // silently failing to create, which leaves the window showing nothing but the
     // clear colour).
     bool GpuFrameHasContent(int* distinctColors = nullptr);
+    // Distinct colour count of the software canvas - the same "is there
+    // anything in this frame?" measurement for the CPU path.
+    int CountCanvasColors() const;
+    // Re-installs the window callbacks after the window was recreated.
+    void SetupWindowCallbacks();
     // Runs that check on a schedule and falls back to the CPU path when the GPU
     // path is presenting flat frames.
     void UpdateVisibilityWatchdog();
@@ -158,6 +167,7 @@ private:
     int m_NextWatchdogFrame = 8;
     int m_WatchdogChecks = 0;
     int m_BlankFrameStreak = 0;
+    bool m_CanvasReported = false;
 #if FW_PLATFORM_WINDOWS
     ComPtr<ID3D11Texture2D> m_WatchdogStaging;
     int m_WatchdogStagingWidth = 0, m_WatchdogStagingHeight = 0;

@@ -6,6 +6,7 @@
 #include "engine/scene/DefaultScene.h"
 #include "engine/render/SoftwareRenderer.h"
 #include <imgui.h>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -23,11 +24,16 @@ bool GameApp::OnInit() {
     m_Engine.Init(false);
 
     // Make sure the startup scene exists (the runtime must never launch into a
-    // blank window just because nothing has been authored yet).
+    // blank window just because nothing has been authored yet) and *load* it, so
+    // the main menu has a live world behind it instead of an empty void. It used
+    // to only create the file and load it when --play was passed.
     DefaultScene::EnsureStarterContent(m_StartupScene);
-    if (!std::filesystem::exists(Paths::Resolve(m_StartupScene))) {
+    if (!m_Engine.LoadScene(Paths::Resolve(m_StartupScene))) {
+        FW_LOG_WARN("Could not load '%s' - building the starter scene in memory", m_StartupScene.c_str());
         m_Engine.NewScene("Default");
         DefaultScene::Build(m_Engine.GetScene(), &m_Engine.GetBrushMap());
+    } else {
+        FW_LOG_INFO("Startup scene loaded: %s", m_StartupScene.c_str());
     }
 
     if (m_AutoPlay) StartGame(m_StartupScene);
@@ -106,12 +112,14 @@ RenderSettings GameApp::MakeSceneSettings() {
 }
 
 void GameApp::OnRender() {
+#if FW_PLATFORM_WINDOWS
     // The menu states also render the scene behind the UI (the starter scene is
     // loaded on startup), so the window is never an empty black rectangle.
     if (m_Engine.GetScene().Registry().view<IDComponent>().size() == 0) return;
 
     const float aspect = (float)m_Device.Width() / std::max(1, m_Device.Height());
     m_Renderer->RenderScene(m_Engine.GetScene(), MakeSceneCamera(aspect), MakeSceneSettings());
+#endif
 }
 
 void GameApp::OnSoftwareRender(SoftCanvas& canvas) {
@@ -194,7 +202,9 @@ void GameApp::DrawSettingsMenu() {
     ImGui::Dummy(ImVec2(0, 10));
     if (ImGui::Button("Save & Back", ImVec2(-1, 32))) {
         settings.Save();
+#if !FORGEWORKS_HEADLESS
         if (m_Engine.GetAudioEngine()) m_Engine.GetAudioEngine()->SetMasterVolume(settings.audio.masterVolume);
+#endif
         m_UIState = m_ReturnStateAfterSettings;
     }
     ImGui::End();
@@ -223,8 +233,37 @@ void GameApp::OnImGui() {
         case GameUIState::MainMenu: DrawMainMenu(); break;
         case GameUIState::Settings: DrawSettingsMenu(); break;
         case GameUIState::Paused: DrawPauseMenu(); break;
-        case GameUIState::Playing: break;
+        case GameUIState::Playing: DrawHud(); break;
     }
+}
+
+// The runtime needs visible UI while playing too: a crosshair plus a status line
+// (fps, entity count, pause hint). Drawn as an overlay in the foreground draw
+// list, so it costs no window and never captures the mouse.
+void GameApp::DrawHud() {
+    const ImGuiIO& io = ImGui::GetIO();
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+    const ImVec2 center(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+    const ImU32 color = IM_COL32(235, 240, 245, 190);
+    const float arm = 7.0f;
+    const float gap = 3.0f;
+    dl->AddLine(ImVec2(center.x - arm - gap, center.y), ImVec2(center.x - gap, center.y), color, 2.0f);
+    dl->AddLine(ImVec2(center.x + gap, center.y), ImVec2(center.x + arm + gap, center.y), color, 2.0f);
+    dl->AddLine(ImVec2(center.x, center.y - arm - gap), ImVec2(center.x, center.y - gap), color, 2.0f);
+    dl->AddLine(ImVec2(center.x, center.y + gap), ImVec2(center.x, center.y + arm + gap), color, 2.0f);
+    dl->AddCircle(ImVec2(center.x, center.y), 2.0f, color, 12, 1.0f);
+
+    char status[192];
+    std::snprintf(status, sizeof(status), "%.0f fps  |  %d entities  |  %s  |  [Esc] menu",
+                  io.Framerate, (int)m_Engine.GetScene().Registry().view<IDComponent>().size(),
+                  m_Engine.State() == EngineRunState::Playing ? "playing" : "paused");
+
+    const ImVec2 textSize = ImGui::CalcTextSize(status);
+    const ImVec2 origin(16.0f, 16.0f);
+    dl->AddRectFilled(origin, ImVec2(origin.x + textSize.x + 16.0f, origin.y + textSize.y + 10.0f),
+                      IM_COL32(0, 0, 0, 120), 4.0f);
+    dl->AddText(ImVec2(origin.x + 8.0f, origin.y + 5.0f), IM_COL32(225, 230, 236, 255), status);
 }
 
 void GameApp::OnResize(int width, int height) { FW_UNUSED(width); FW_UNUSED(height); }

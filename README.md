@@ -57,7 +57,14 @@ build\bin\ForgeworksEditor.exe --screenshot shots\editor.png --frames 30
 # -> shots\editor.viewport.png  (3D viewport only, CPU rendered)
 ```
 
-The game runtime accepts the same switches (`ForgeworksGame.exe --screenshot ... --play`).
+The game runtime has the same treatment - `fwui --game` renders the runtime shell (main
+menu, and with `--play` the world plus the in-game HUD) through the CPU path:
+
+![Game main menu](docs/screenshots/game_menu.png)
+
+![Game running](docs/screenshots/game_hud.png)
+
+The game executable accepts the same switches (`ForgeworksGame.exe --screenshot ... --play`).
 
 ## Feature overview
 
@@ -152,6 +159,37 @@ time the editor runs.
 Viewport controls: **RMB drag** looks, **WASD/QE** move (no button needed), **Shift** = fast,
 **mouse wheel** = fly speed, **F** = frame the selection, **F12** = save a viewport PNG to
 `assets/screenshots/viewport.png`.
+
+### Why the editor could show nothing at all (fixed)
+
+Two independent bugs made the Map Maker open as an empty window, and both are
+worth knowing about because they are invisible from the outside:
+
+1. **The interface was drawn into the wrong texture.** `ImGui_ImplDX11_RenderDrawData()`
+   does not set a render target - it draws into whatever is currently bound - and the
+   editor renders its 3D viewport into an off-screen texture. The viewport therefore
+   left *its own* render target bound, the whole UI was drawn into that texture
+   (a feedback loop), and the back buffer kept only the clear colour. Every D3D11
+   call reported success, D3D11 presented a "valid" frame of nothing, and no log
+   line could explain it. `RenderDevice::BindBackBufferTargets()` is now called
+   after the scene pass and before ImGui, and the startup log prints a
+   **Visibility check** line (distinct colours in the presented frame) every so
+   often: `1 distinct colour` means the window is a flat fill, `>3` means there is
+   real content.
+2. **A broken shader killed the GPU viewport.** `assets/shaders/Grid.hlsl` used
+   `float line = ...`, and `line` is a reserved HLSL keyword (geometry-shader
+   primitives), so `D3DCompile` rejected the grid shader. The editor handled that by
+   falling back to the CPU preview, which was fine - except it also recompiled and
+   re-logged the failure every frame. Failed shaders are now cached as failures, and
+   the headless test suite lints every shader in `assets/shaders` for reserved
+   keywords, missing entry points, unbalanced braces and non-ASCII bytes, so this
+   class of bug fails on any machine instead of only on Windows at run time.
+
+The GPUs-less guarantee from the previous section stays: if the GPU path cannot draw,
+the editor switches itself to CPU rendering, and that fallback now recreates the
+window (a window that has hosted a DXGI flip-model swap chain ignores GDI painting
+once the swap chain is released, which is why the fallback used to switch while the
+window still showed nothing).
 
 ### "The editor starts but I see nothing"
 

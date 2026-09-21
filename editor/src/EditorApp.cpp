@@ -293,6 +293,23 @@ void EditorApp::OnRender() {
 
 void EditorApp::OnResize(int width, int height) { FW_UNUSED(width); FW_UNUSED(height); }
 
+void EditorApp::OnSoftwarePresentation() {
+    // Always use the CPU viewport preview on the software presentation path -
+    // the GPU viewport target cannot exist without a D3D11 device.
+    m_SoftwarePreview = true;
+    m_SoftwarePreviewDirty = true;
+#if FW_PLATFORM_WINDOWS
+    m_ViewportRTV.Reset();
+    m_ViewportSRV.Reset();
+    m_ViewportColorTex.Reset();
+    m_ViewportDSV.Reset();
+    m_ViewportDepthTex.Reset();
+    m_ViewportTexWidth = m_ViewportTexHeight = 0;
+    ReleaseSoftwarePreviewTexture();
+#endif
+    FW_LOG_INFO("Editor: using the CPU viewport preview (presentation path changed)");
+}
+
 void EditorApp::OnScreenshot(const std::string& path) {
     // Also write a viewport-only image (rendered by the CPU renderer, so it
     // works even when the GPU path is unavailable) next to the window capture:

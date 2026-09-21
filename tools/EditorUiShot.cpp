@@ -18,8 +18,10 @@
 //
 // Usage: fwui [--out <file.png>] [--width N] [--height N] [--frames N]
 //             [--scene <file.fwscene>] [--root <dir>] [--no-viewport-png]
+//             [--game] [--play]
 
 #include "editor/EditorApp.h"
+#include "game/GameApp.h"
 #include "engine/core/Log.h"
 #include "engine/core/Paths.h"
 #include "engine/render/SoftCanvas.h"
@@ -46,6 +48,19 @@ public:
     using fw::EditorApp::OnUpdate;
 };
 
+// ---------------------------------------------------------------------------
+// Game variants: the same Application/SoftCanvas plumbing, but with GameApp's
+// runtime shell on top (main menu, pause menu, scene through the CPU renderer).
+// ---------------------------------------------------------------------------
+class HeadlessGame : public fw::GameApp {
+public:
+    using fw::GameApp::OnImGui;
+    using fw::GameApp::OnInit;
+    using fw::GameApp::OnShutdown;
+    using fw::GameApp::OnSoftwareRender;
+    using fw::GameApp::OnUpdate;
+};
+
 struct Options {
     std::string out = "docs/screenshots/editor_ui.png";
     std::string scene;
@@ -54,6 +69,8 @@ struct Options {
     int height = 900;
     int frames = 10;
     bool viewportPng = true;
+    bool game = false;   // --game: render the game runtime instead of the editor
+    bool play = false;   // --play: start the scene instead of showing the menu
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -68,6 +85,8 @@ Options ParseArgs(int argc, char** argv) {
         else if (a == "--height") { std::string v; next(v); o.height = std::atoi(v.c_str()); }
         else if (a == "--frames") { std::string v; next(v); o.frames = std::atoi(v.c_str()); }
         else if (a == "--no-viewport-png") o.viewportPng = false;
+        else if (a == "--game") o.game = true;
+        else if (a == "--play") o.play = true;
     }
     if (o.width < 320) o.width = 320;
     if (o.height < 240) o.height = 240;
@@ -132,16 +151,28 @@ int main(int argc, char** argv) {
     if (!opt.root.empty()) fw::Paths::SetProjectRootOverride(opt.root);
     fw::Paths::Initialize();
 
-    // The editor runs on the CPU presentation path: no D3D11 device, no swap
-    // chain. Its viewport, its interface and the capture all go through
-    // SoftCanvas - the exact code the editor uses on a Windows machine when
-    // --software is passed or the GPU path is unavailable.
-    HeadlessEditor app;
-    app.SetSoftwareMode(true);
-    app.SetViewportPreviewScale(1.0f);
-    app.SetStartupReportFrame(0);
-    app.Canvas().Resize(opt.width, opt.height);
-    if (!opt.scene.empty()) app.SetStartupScene(opt.scene);
+    // The apps run on the CPU presentation path: no D3D11 device, no swap chain.
+    // Their content, their interface and the capture all go through SoftCanvas -
+    // the exact code the executables use on a Windows machine when --software is
+    // passed or the GPU path is unavailable.
+    HeadlessEditor editor;
+    HeadlessGame game;
+    fw::Application& appBase = opt.game ? static_cast<fw::Application&>(game)
+                                        : static_cast<fw::Application&>(editor);
+    if (opt.game) {
+        game.SetSoftwareMode(true);
+        game.SetStartupReportFrame(0);
+        if (opt.play) game.SetStartPlaying(true);
+    } else {
+        editor.SetSoftwareMode(true);
+        editor.SetViewportPreviewScale(1.0f);
+        editor.SetStartupReportFrame(0);
+    }
+    appBase.Canvas().Resize(opt.width, opt.height);
+    if (!opt.scene.empty()) {
+        if (opt.game) game.SetStartupScene(opt.scene);
+        else editor.SetStartupScene(opt.scene);
+    }
 
     // ImGui with no platform/renderer backend: the core library, the docking
     // branch and SoftCanvas are all a headless tool needs.
@@ -157,8 +188,10 @@ int main(int argc, char** argv) {
     io.IniFilename = nullptr;  // ignore any imgui.ini: capture the built-in default layout
     ImGui::StyleColorsDark();
 
-    if (!app.OnInit()) {
-        std::fprintf(stderr, "fwui: EditorApp::OnInit() failed - see the log above\n");
+    const bool started = opt.game ? game.OnInit() : editor.OnInit();
+    if (!started) {
+        std::fprintf(stderr, "fwui: %s::OnInit() failed - see the log above\n",
+                     opt.game ? "GameApp" : "EditorApp");
         ImGui::DestroyContext();
         return 1;
     }
@@ -166,29 +199,37 @@ int main(int argc, char** argv) {
     FrameStats stats;
     for (int frame = 0; frame < opt.frames; frame++) {
         io.DisplaySize = ImVec2((float)opt.width, (float)opt.height);
-        app.OnUpdate(io.DeltaTime);   // ticks the engine and marks the CPU viewport dirty
+        // Exactly what Application::MainLoop does on the CPU presentation path:
+        // clear -> the app's own scene -> ImGui interface -> rasterize.
+        if (opt.game) game.OnUpdate(io.DeltaTime);
+        else editor.OnUpdate(io.DeltaTime);   // ticks the engine, marks the CPU viewport dirty
+        appBase.Canvas().Clear(IM_COL32(13, 13, 16, 255));
+        if (opt.game) game.OnSoftwareRender(appBase.Canvas());
         ImGui::NewFrame();
-        app.OnImGui();                // the real editor interface
+        if (opt.game) game.OnImGui();          // the real game UI (menu / HUD)
+        else editor.OnImGui();                 // the real editor interface
         ImGui::Render();
-        app.Canvas().Clear(IM_COL32(13, 13, 16, 255));
-        app.Canvas().RenderImGuiFrame();
-        stats = Analyze(app.Canvas());
+        appBase.Canvas().RenderImGuiFrame();
+        stats = Analyze(appBase.Canvas());
     }
 
-    std::printf("fwui: draw lists %d | vertices %d | indices %d | UI coverage %.1f%% | distinct colours %d\n",
+    std::printf("fwui: %s | draw lists %d | vertices %d | indices %d | UI coverage %.1f%% | distinct colours %d\n",
+                opt.game ? "game" : "editor",
                 stats.drawLists, stats.vertices, stats.indices, stats.Coverage() * 100.0f, stats.distinctColors);
 
-    bool ok = WritePng(opt.out, app.Canvas());
-    if (opt.viewportPng) {
+    bool ok = WritePng(opt.out, appBase.Canvas());
+    if (opt.viewportPng && !opt.game) {
         // Also save the viewport on its own (the CPU renderer at full size).
-        app.OnScreenshot(opt.out);
+        editor.OnScreenshot(opt.out);
     }
 
-    app.OnShutdown();
+    if (opt.game) game.OnShutdown();
+    else editor.OnShutdown();
     ImGui::DestroyContext();
 
     if (stats.vertices == 0 || stats.uiPixels == 0) {
-        std::fprintf(stderr, "fwui: the editor interface produced no visible pixels\n");
+        std::fprintf(stderr, "fwui: the %s interface produced no visible pixels\n",
+                     opt.game ? "game" : "editor");
         return 2;
     }
     return ok ? 0 : 1;
